@@ -152,11 +152,34 @@ onUnmounted(() => {
       </nav>
 
       <div class="sidebar-foot">
-        <div class="demo-card" :class="{ 'demo-card--live': store.isLive }">
+        <!--
+          Zeigt den NinjaOne-Zustand. Der Modus gilt für die ganze
+          Installation, nicht für das angemeldete Konto – deshalb nennt der
+          Hinweis auch, wer ihn ändern kann.
+        -->
+        <RouterLink
+          v-if="store.isAdmin"
+          to="/einstellungen?tab=ninjaone"
+          class="demo-card"
+          :class="{ 'demo-card--live': store.isLive }"
+          :title="store.isLive ? 'NinjaOne-Zugang verwalten' : 'Es sind keine NinjaOne-Zugänge hinterlegt'"
+        >
           <span class="pulse-dot" />
           <div>
-            <strong>{{ store.isLive ? 'Live-Modus' : 'Demo-Modus' }}</strong>
-            <small>{{ store.isLive ? 'NinjaOne · echte Daten' : 'NinjaOne Mock · SQLite' }}</small>
+            <strong>{{ store.isLive ? 'Live-Modus' : 'Testdaten' }}</strong>
+            <small>
+              {{ store.isLive ? 'NinjaOne · echte Daten' : 'NinjaOne: keine Zugänge hinterlegt' }}
+            </small>
+          </div>
+        </RouterLink>
+
+        <div v-else class="demo-card" :class="{ 'demo-card--live': store.isLive }">
+          <span class="pulse-dot" />
+          <div>
+            <strong>{{ store.isLive ? 'Live-Modus' : 'Testdaten' }}</strong>
+            <small>
+              {{ store.isLive ? 'NinjaOne · echte Daten' : 'NinjaOne-Zugang fehlt · Administrator fragen' }}
+            </small>
           </div>
         </div>
 

@@ -5051,3 +5051,19 @@ ol {
 .users-table td:last-child .btn + .btn {
   margin-left: 6px;
 }
+
+/* Der Modushinweis ist ein Link zu den NinjaOne-Einstellungen (nur Admins). */
+a.demo-card {
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+a.demo-card:hover {
+  border-color: var(--teal, #0f766e);
+  background: #f2fbfa;
+}
+
+a.demo-card.demo-card--live:hover {
+  background: #eafaf7;
+}

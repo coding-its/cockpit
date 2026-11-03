@@ -1,0 +1,23 @@
+{
+  "name": "wartungscockpit",
+  "version": "0.1.3",
+  "private": true,
+  "description": "Wartungscockpit für NinjaOne und WordPress – Phase-0-Prototyp",
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "dev:web": "npm --workspace apps/web run dev",
+    "build:web": "npm --workspace apps/web run build",
+    "preview:web": "npm --workspace apps/web run preview",
+    "dev:api": "cargo run --manifest-path apps/api/Cargo.toml",
+    "test:api": "cargo test --manifest-path apps/api/Cargo.toml",
+    "check": "npm run build:web && npm run test:api",
+    "build:desktop": "npm run build:web && cargo build --release --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "installer:desktop": "npm run build:web && npx --prefix apps/desktop tauri build --bundles msi",
+    "dev:desktop": "npm run build:web && cargo run --manifest-path apps/desktop/src-tauri/Cargo.toml"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

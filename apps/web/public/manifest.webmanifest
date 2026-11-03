@@ -1,0 +1,24 @@
+{
+  "name": "Wartungscockpit",
+  "short_name": "Cockpit",
+  "description": "Wartungsläufe, Zeiterfassung und Abrechnung für NinjaOne und WordPress.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#0b1220",
+  "lang": "de",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/itsolutio-wordmark.png",
+      "sizes": "1138x223",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

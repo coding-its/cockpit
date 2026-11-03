@@ -1,0 +1,38 @@
+# Rust
+target/
+apps/api/target/
+apps/api/data/
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# Node
+node_modules/
+apps/web/dist/
+apps/web/.vite/
+*.tsbuildinfo
+
+# Env & secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Logs
+*.log
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.tmp/
+
+# Tauri
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/
+
+# Tauri-Icons für Mobilgeräte (nicht verwendet)
+apps/desktop/src-tauri/icons/android/
+apps/desktop/src-tauri/icons/ios/

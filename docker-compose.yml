@@ -1,0 +1,47 @@
+services:
+  app:
+    build: .
+    image: wartungscockpit:0.1.0
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: 8080
+      DATABASE_URL: "sqlite:///data/cockpit.db?mode=rwc"
+      STATIC_DIR: /app/web
+      NINJAONE_MOCK: "${NINJAONE_MOCK:-true}"
+      NINJAONE_BASE_URL: "${NINJAONE_BASE_URL:-https://eu.ninjarmm.com}"
+      NINJAONE_CLIENT_ID: "${NINJAONE_CLIENT_ID:-}"
+      NINJAONE_CLIENT_SECRET: "${NINJAONE_CLIENT_SECRET:-}"
+      WP_AGENT_SHARED_SECRET: "${WP_AGENT_SHARED_SECRET:-change-me-in-production}"
+    volumes:
+      - cockpit-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  # Optionaler Reverse Proxy mit automatischem TLS.
+  # Start: DOMAIN=cockpit.example.de docker compose --profile proxy up -d
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: "${DOMAIN:-localhost}"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  cockpit-data:
+  caddy-data:
+  caddy-config:

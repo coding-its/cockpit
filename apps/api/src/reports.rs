@@ -24,6 +24,10 @@ pub struct MonthlyReport {
 #[derive(Debug, Serialize, Default)]
 pub struct ReportTotals {
     pub customers: usize,
+    /// Sekundengenau, damit sich jeder Betrag nachrechnen lässt. Die Stunden
+    /// daneben sind nur die gerundete Anzeige derselben Zahl.
+    pub billable_seconds: i64,
+    pub non_billable_seconds: i64,
     pub billable_hours: f64,
     pub non_billable_hours: f64,
     pub time_amount: f64,
@@ -52,6 +56,11 @@ pub struct ReportBlock {
     /// `contract` bei eigenem Vertragssatz, `standard` beim Standard-Satz.
     pub rate_source: String,
     pub flat_fee: f64,
+    /// Grundlage aller Beträge: die tatsächlich erfassten Sekunden.
+    pub billable_seconds: i64,
+    pub non_billable_seconds: i64,
+    /// Überhang über die Inklusivstunden, ebenfalls in Sekunden.
+    pub overage_seconds: i64,
     pub billable_hours: f64,
     pub non_billable_hours: f64,
     pub overage_hours: f64,
@@ -126,8 +135,8 @@ struct CustomerRow {
     included_hours: f64,
     hourly_rate: f64,
     flat_fee: f64,
-    billable_hours: f64,
-    non_billable_hours: f64,
+    billable_seconds: i64,
+    non_billable_seconds: i64,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -138,8 +147,8 @@ struct WebRow {
     contact_name: Option<String>,
     contact_email: Option<String>,
     hourly_rate: f64,
-    billable_hours: f64,
-    non_billable_hours: f64,
+    billable_seconds: i64,
+    non_billable_seconds: i64,
     site_count: i64,
 }
 
@@ -213,6 +222,23 @@ fn round2(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
 
+/// Sekunden in Stunden – nur für die Anzeige, nie als Rechengrundlage.
+pub fn seconds_to_hours(seconds: i64) -> f64 {
+    round2(seconds as f64 / 3600.0)
+}
+
+/// Betrag für eine Dauer. Grundlage sind immer die erfassten Sekunden,
+/// damit Betrag und Dauer im Nachweis zusammenpassen.
+pub fn seconds_to_amount(seconds: i64, hourly_rate: f64) -> f64 {
+    round2(seconds as f64 / 3600.0 * hourly_rate)
+}
+
+/// Überhang über das Inklusivvolumen, in Sekunden. Nie negativ.
+pub fn overage_seconds(billable_seconds: i64, included_hours: f64) -> i64 {
+    let included = (included_hours * 3600.0).round() as i64;
+    (billable_seconds - included).max(0)
+}
+
 fn action_label(kind: &str) -> String {
     match kind {
         "health" => "Health-Check".to_string(),
@@ -244,12 +270,12 @@ pub async fn monthly(
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.customer_id = c.id AND te.billable = true
                   AND substr(te.started_at, 1, 7) = $1
-            ), 0)::double precision / 3600.0 AS billable_hours,
+            ), 0)::bigint AS billable_seconds,
             COALESCE((
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.customer_id = c.id AND te.billable = false
                   AND substr(te.started_at, 1, 7) = $1
-            ), 0)::double precision / 3600.0 AS non_billable_hours
+            ), 0)::bigint AS non_billable_seconds
         FROM customers c
         LEFT JOIN contracts ct ON ct.id = (
             SELECT id FROM contracts WHERE customer_id = c.id AND active = true LIMIT 1
@@ -271,12 +297,12 @@ pub async fn monthly(
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.web_client_id = w.id AND te.billable = true
                   AND substr(te.started_at, 1, 7) = $1
-            ), 0)::double precision / 3600.0 AS billable_hours,
+            ), 0)::bigint AS billable_seconds,
             COALESCE((
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.web_client_id = w.id AND te.billable = false
                   AND substr(te.started_at, 1, 7) = $1
-            ), 0)::double precision / 3600.0 AS non_billable_hours,
+            ), 0)::bigint AS non_billable_seconds,
             (SELECT COUNT(*) FROM sites s WHERE s.web_client_id = w.id) AS site_count
         FROM web_clients w
         WHERE w.active = true
@@ -291,15 +317,13 @@ pub async fn monthly(
 
     for customer in customers {
         let runs = load_runs(pool, &customer.id, month).await?;
-        let idle = customer.billable_hours <= 0.0
-            && customer.non_billable_hours <= 0.0
+        let idle = customer.billable_seconds <= 0
+            && customer.non_billable_seconds <= 0
             && runs.is_empty();
 
         if idle && !include_idle {
             continue;
         }
-
-        let entries = load_entries(pool, Some(&customer.id), None, month, customer.hourly_rate).await?;
 
         let rate_source = if customer.hourly_rate > 0.0 { "contract" } else { "standard" };
         let hourly_rate = if customer.hourly_rate > 0.0 {
@@ -308,8 +332,21 @@ pub async fn monthly(
             billing.default_hourly_rate
         };
 
-        let overage = (customer.billable_hours - customer.included_hours).max(0.0);
-        let time_amount = overage * hourly_rate;
+        // Erst den gültigen Satz bestimmen, dann die Zeilen rechnen: Ohne
+        // Vertrag wäre der Satz sonst 0 und jeder Einzelbetrag 0,00 €.
+        let entries = load_entries(pool, Some(&customer.id), None, month, hourly_rate).await?;
+
+        let overage_secs = overage_seconds(customer.billable_seconds, customer.included_hours);
+        // Grundlage ist die Summe der Einzelbeträge – so ergibt die Addition
+        // der gedruckten Zeilen genau die Kundensumme, auch auf den Cent.
+        // Abgezogen wird der Wert der Inklusivstunden.
+        let lines_total: f64 = entries
+            .iter()
+            .filter(|entry| entry.billable)
+            .map(|entry| entry.amount)
+            .sum();
+        let included_value = round2(customer.included_hours * hourly_rate);
+        let time_amount = round2((lines_total - included_value).max(0.0));
         // Auf Cent runden, bevor die Steuer darauf rechnet – sonst weicht die
         // Kundensumme um einen Cent von der Gesamtsumme ab.
         let net = round2(customer.flat_fee + time_amount);
@@ -327,10 +364,13 @@ pub async fn monthly(
             hourly_rate,
             rate_source: rate_source.to_string(),
             flat_fee: customer.flat_fee,
-            billable_hours: round2(customer.billable_hours),
-            non_billable_hours: round2(customer.non_billable_hours),
-            overage_hours: round2(overage),
-            time_amount: round2(time_amount),
+            billable_seconds: customer.billable_seconds,
+            non_billable_seconds: customer.non_billable_seconds,
+            overage_seconds: overage_secs,
+            billable_hours: seconds_to_hours(customer.billable_seconds),
+            non_billable_hours: seconds_to_hours(customer.non_billable_seconds),
+            overage_hours: seconds_to_hours(overage_secs),
+            time_amount,
             total_amount: net,
             vat_amount,
             gross_amount,
@@ -342,11 +382,10 @@ pub async fn monthly(
 
     for client in web_clients {
         let sites = load_sites(pool, &client.id, month).await?;
-        let entries = load_entries(pool, None, Some(&client.id), month, client.hourly_rate).await?;
 
         let action_count: usize = sites.iter().map(|site| site.actions.len()).sum();
-        let idle = client.billable_hours <= 0.0
-            && client.non_billable_hours <= 0.0
+        let idle = client.billable_seconds <= 0
+            && client.non_billable_seconds <= 0
             && action_count == 0;
 
         if idle && !include_idle {
@@ -360,8 +399,16 @@ pub async fn monthly(
             billing.default_hourly_rate
         };
 
-        let time_amount = client.billable_hours * hourly_rate;
-        let (vat_amount, gross_amount) = with_vat(round2(time_amount), billing.vat_rate);
+        let entries = load_entries(pool, None, Some(&client.id), month, hourly_rate).await?;
+
+        let time_amount = round2(
+            entries
+                .iter()
+                .filter(|entry| entry.billable)
+                .map(|entry| entry.amount)
+                .sum::<f64>(),
+        );
+        let (vat_amount, gross_amount) = with_vat(time_amount, billing.vat_rate);
 
         blocks.push(ReportBlock {
             kind: "web".to_string(),
@@ -383,11 +430,14 @@ pub async fn monthly(
             hourly_rate,
             rate_source: rate_source.to_string(),
             flat_fee: 0.0,
-            billable_hours: round2(client.billable_hours),
-            non_billable_hours: round2(client.non_billable_hours),
-            overage_hours: round2(client.billable_hours),
-            time_amount: round2(time_amount),
-            total_amount: round2(time_amount),
+            billable_seconds: client.billable_seconds,
+            non_billable_seconds: client.non_billable_seconds,
+            overage_seconds: client.billable_seconds,
+            billable_hours: seconds_to_hours(client.billable_seconds),
+            non_billable_hours: seconds_to_hours(client.non_billable_seconds),
+            overage_hours: seconds_to_hours(client.billable_seconds),
+            time_amount,
+            total_amount: time_amount,
             vat_amount,
             gross_amount,
             sites,
@@ -402,8 +452,8 @@ pub async fn monthly(
     };
 
     for block in &blocks {
-        totals.billable_hours += block.billable_hours;
-        totals.non_billable_hours += block.non_billable_hours;
+        totals.billable_seconds += block.billable_seconds;
+        totals.non_billable_seconds += block.non_billable_seconds;
         totals.time_amount += block.time_amount;
         totals.flat_fees += block.flat_fee;
         totals.total_amount += block.total_amount;
@@ -411,8 +461,8 @@ pub async fn monthly(
         totals.actions += block.sites.iter().map(|site| site.actions.len()).sum::<usize>();
     }
 
-    totals.billable_hours = round2(totals.billable_hours);
-    totals.non_billable_hours = round2(totals.non_billable_hours);
+    totals.billable_hours = seconds_to_hours(totals.billable_seconds);
+    totals.non_billable_hours = seconds_to_hours(totals.non_billable_seconds);
     totals.time_amount = round2(totals.time_amount);
     totals.flat_fees = round2(totals.flat_fees);
     totals.total_amount = round2(totals.total_amount);
@@ -577,7 +627,7 @@ async fn load_entries(
         .into_iter()
         .map(|row| {
             let amount = if row.billable {
-                (row.duration_seconds as f64 / 3600.0) * hourly_rate
+                seconds_to_amount(row.duration_seconds, hourly_rate)
             } else {
                 0.0
             };
@@ -590,7 +640,7 @@ async fn load_entries(
                 billable: row.billable,
                 source: row.source,
                 context: row.device_label.or(row.site_label),
-                amount: round2(amount),
+                amount,
             }
         })
         .collect())
@@ -598,7 +648,13 @@ async fn load_entries(
 
 #[cfg(test)]
 mod tests {
-    use super::valid_month;
+    use super::{
+        monthly, overage_seconds, seconds_to_amount, seconds_to_hours, valid_month,
+    };
+    use crate::settings::BillingSettings;
+    use crate::testdb;
+    use crate::util::now_iso;
+    use sqlx::PgPool;
 
     #[test]
     fn month_format_is_validated() {
@@ -613,5 +669,182 @@ mod tests {
         assert!(!valid_month("2026/10"));
         assert!(!valid_month(""));
         assert!(!valid_month("2026-1x"));
+    }
+
+    #[test]
+    fn amount_matches_the_duration_that_is_printed() {
+        // Der Fall aus der Praxis: 43 Sekunden angeklickt. Gedruckt wird
+        // „43 s" und ein Betrag, der sich daraus nachrechnen lässt.
+        assert_eq!(seconds_to_amount(43, 126.05), 1.51);
+        assert_eq!(seconds_to_amount(45 * 60, 126.05), 94.54);
+        assert_eq!(seconds_to_amount(0, 126.05), 0.0);
+
+        // Wenige Sekunden ergeben einen Cent-Betrag, keine erfundene Stunde.
+        assert_eq!(seconds_to_amount(5, 126.05), 0.18);
+        assert_eq!(seconds_to_amount(2, 126.05), 0.07);
+    }
+
+    #[test]
+    fn overage_never_goes_negative_and_respects_included_hours() {
+        assert_eq!(overage_seconds(3600, 2.0), 0, "innerhalb des Inklusivvolumens");
+        assert_eq!(overage_seconds(3600, 0.0), 3600);
+        assert_eq!(overage_seconds(3 * 3600, 2.0), 3600);
+        assert_eq!(overage_seconds(1800, 0.5), 0);
+        assert_eq!(overage_seconds(1800 + 600, 0.5), 600);
+    }
+
+    #[test]
+    fn hours_are_only_the_displayed_view_of_the_seconds() {
+        assert_eq!(seconds_to_hours(3600), 1.0);
+        assert_eq!(seconds_to_hours(45 * 60), 0.75);
+        assert_eq!(seconds_to_hours(43), 0.01);
+    }
+
+    async fn customer_with(pool: &PgPool, id: &str, included: f64, rate: f64) {
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ($1, 'Testkunde', 'TST', true, $2)",
+        )
+        .bind(id)
+        .bind(now_iso())
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO contracts (id, customer_id, name, included_hours, hourly_rate, flat_fee, active)
+             VALUES ($1, $2, 'Wartung', $3, $4, 0, true)",
+        )
+        .bind(format!("ct-{id}"))
+        .bind(id)
+        .bind(included)
+        .bind(rate)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn entry(pool: &PgPool, id: &str, customer_id: &str, seconds: i64) {
+        sqlx::query(
+            "INSERT INTO time_entries
+                (id, customer_id, user_name, activity, started_at, ended_at,
+                 duration_seconds, billable, source, created_at)
+             VALUES ($1, $2, 'S. Wolf', 'Gerätewartung', '2026-11-03T06:54:00',
+                     '2026-11-03T06:55:00', $3, true, 'timer', $4)",
+        )
+        .bind(id)
+        .bind(customer_id)
+        .bind(seconds)
+        .bind(now_iso())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn short_entries_are_billed_by_their_real_duration() {
+        let (_guard, pool) = testdb::fixture().await;
+        customer_with(&pool, "k1", 0.0, 126.05).await;
+        // 3 + 24 + 16 Sekunden = 43 Sekunden, so wie am 3. November erfasst.
+        entry(&pool, "e1", "k1", 3).await;
+        entry(&pool, "e2", "k1", 24).await;
+        entry(&pool, "e3", "k1", 16).await;
+
+        let report = monthly(&pool, "2026-11", false, &BillingSettings::default())
+            .await
+            .unwrap();
+
+        let block = &report.blocks[0];
+        assert_eq!(block.billable_seconds, 43);
+        assert_eq!(block.overage_seconds, 43);
+        assert_eq!(block.time_amount, 1.51);
+        // Die gedruckten Einzelbeträge ergeben genau die Kundensumme.
+        let sum: f64 = block.entries.iter().map(|entry| entry.amount).sum();
+        assert_eq!((sum * 100.0).round() / 100.0, 1.51);
+    }
+
+    #[tokio::test]
+    async fn report_totals_are_the_sum_of_the_customer_amounts() {
+        let (_guard, pool) = testdb::fixture().await;
+        customer_with(&pool, "k1", 0.0, 126.05).await;
+        customer_with(&pool, "k2", 0.0, 95.0).await;
+        entry(&pool, "e1", "k1", 43).await;
+        entry(&pool, "e2", "k2", 2700).await;
+
+        let report = monthly(&pool, "2026-11", false, &BillingSettings::default())
+            .await
+            .unwrap();
+
+        let sum: f64 = report.blocks.iter().map(|block| block.total_amount).sum();
+        assert_eq!(
+            (sum * 100.0).round() / 100.0,
+            report.totals.total_amount,
+            "die Gesamtsumme ist die Addition der Kundensummen"
+        );
+        assert_eq!(report.totals.billable_seconds, 43 + 2700);
+    }
+
+    #[tokio::test]
+    async fn entry_amounts_use_the_standard_rate_without_a_contract() {
+        let (_guard, pool) = testdb::fixture().await;
+        // Kein Vertrag: der Satz kommt aus den Einstellungen, nicht aus 0.
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('k1', 'Ohne Vertrag', 'OHV', true, $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+        entry(&pool, "e1", "k1", 5400).await;
+
+        let billing = BillingSettings {
+            default_hourly_rate: 100.0,
+            vat_rate: 19.0,
+        };
+        let report = monthly(&pool, "2026-11", false, &billing).await.unwrap();
+
+        let block = &report.blocks[0];
+        assert_eq!(block.rate_source, "standard");
+        assert_eq!(block.entries[0].amount, 150.0);
+        assert_eq!(block.time_amount, 150.0);
+    }
+
+    #[tokio::test]
+    async fn customer_amount_is_the_sum_of_the_printed_lines() {
+        let (_guard, pool) = testdb::fixture().await;
+        customer_with(&pool, "k1", 0.0, 126.05).await;
+        // 3 + 24 + 16 + 5400 Sekunden: einzeln gerundet ergibt 190,59 €.
+        entry(&pool, "e1", "k1", 3).await;
+        entry(&pool, "e2", "k1", 24).await;
+        entry(&pool, "e3", "k1", 16).await;
+        entry(&pool, "e4", "k1", 5400).await;
+
+        let report = monthly(&pool, "2026-11", false, &BillingSettings::default())
+            .await
+            .unwrap();
+
+        let block = &report.blocks[0];
+        let sum: f64 = block.entries.iter().map(|entry| entry.amount).sum();
+        assert_eq!(
+            (sum * 100.0).round() / 100.0,
+            block.time_amount,
+            "die Kundensumme ist die Addition der Zeilenbeträge"
+        );
+    }
+
+    #[tokio::test]
+    async fn included_hours_are_deducted_in_seconds() {
+        let (_guard, pool) = testdb::fixture().await;
+        customer_with(&pool, "k1", 2.0, 100.0).await;
+        // 1 Stunde 59 Minuten 30 Sekunden: noch im Inklusivvolumen.
+        entry(&pool, "e1", "k1", 7170).await;
+
+        let report = monthly(&pool, "2026-11", false, &BillingSettings::default())
+            .await
+            .unwrap();
+
+        assert_eq!(report.blocks[0].overage_seconds, 0);
+        assert_eq!(report.blocks[0].time_amount, 0.0);
     }
 }

@@ -1,7 +1,9 @@
 use crate::models::TimeEntryListItem;
 use crate::util::{german_date, german_decimal};
 
-pub fn to_csv(entries: &[TimeEntryListItem]) -> anyhow::Result<String> {
+/// `vat_rate` kommt aus den Einstellungen – im Export darf nicht fest 19
+/// stehen, sonst stimmt die Steuerspalte bei abweichendem Satz nicht.
+pub fn to_csv(entries: &[TimeEntryListItem], vat_rate: f64) -> anyhow::Result<String> {
     let mut writer = csv::WriterBuilder::new()
         .delimiter(b';')
         .from_writer(Vec::new());
@@ -22,11 +24,8 @@ pub fn to_csv(entries: &[TimeEntryListItem]) -> anyhow::Result<String> {
 
     for entry in entries {
         let hours = entry.duration_seconds as f64 / 3600.0;
-        let amount = if entry.billable {
-            hours * entry.hourly_rate
-        } else {
-            0.0
-        };
+        // Betrag aus derselben Rechnung wie in Aufstellung und Bericht.
+        let amount = if entry.billable { entry.amount } else { 0.0 };
 
         let record = vec![
             german_date(&entry.started_at),
@@ -37,7 +36,7 @@ pub fn to_csv(entries: &[TimeEntryListItem]) -> anyhow::Result<String> {
             "Stunde".to_string(),
             german_decimal(entry.hourly_rate, 2),
             german_decimal(amount, 2),
-            "19".to_string(),
+            german_decimal(vat_rate, 0),
             if entry.billable { "ja" } else { "nein" }.to_string(),
             source_label(&entry.source).to_string(),
         ];
@@ -94,12 +93,13 @@ mod tests {
             source: "timer".to_string(),
             hourly_rate: 95.0,
             billed_at: None,
+            amount: 142.5,
         }
     }
 
     #[test]
     fn csv_uses_semicolon_and_german_numbers() {
-        let csv = to_csv(&[entry()]).unwrap();
+        let csv = to_csv(&[entry()], 19.0).unwrap();
         assert!(csv.starts_with('\u{feff}'));
         assert!(csv.contains("20.10.2026"));
         assert!(csv.contains("1,50"));

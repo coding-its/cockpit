@@ -218,7 +218,9 @@ pub async fn get_client(
     .fetch_all(&state.pool)
     .await?;
 
-    let time_entries = queries::time_entries(&state.pool, None, Some(&id), None, 50).await?;
+    let default_rate = crate::settings::default_hourly_rate(&state.pool).await;
+    let time_entries =
+        queries::time_entries(&state.pool, None, Some(&id), None, 50, default_rate).await?;
 
     let month = current_month();
     let month_hours: Option<f64> = sqlx::query_scalar(
@@ -1325,7 +1327,8 @@ pub async fn create_manual_entry(
     )
     .await?;
 
-    Ok(Json(queries::time_entry(&state.pool, &id).await?))
+    let default_rate = crate::settings::default_hourly_rate(&state.pool).await;
+    Ok(Json(queries::time_entry(&state.pool, &id, default_rate).await?))
 }
 
 pub async fn update_comment(
@@ -1355,7 +1358,8 @@ pub async fn update_comment(
         .execute(&state.pool)
         .await?;
 
-    Ok(Json(queries::time_entry(&state.pool, &id).await?))
+    let default_rate = crate::settings::default_hourly_rate(&state.pool).await;
+    Ok(Json(queries::time_entry(&state.pool, &id, default_rate).await?))
 }
 
 // ---------------------------------------------------------------------------

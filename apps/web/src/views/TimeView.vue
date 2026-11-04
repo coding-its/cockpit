@@ -315,11 +315,11 @@ onUnmounted(() => {
               <tbody>
                 <tr v-for="customer in sortedBilling" :key="customer.customer_id">
                   <td>{{ customer.short_code }}</td>
-                  <td class="num">{{ formatHours(customer.billable_hours) }}</td>
+                  <td class="num">{{ formatDuration(customer.billable_seconds) }}</td>
                   <td class="num">{{ formatHours(customer.included_hours) }}</td>
                   <td class="num">
-                    <span :class="{ 'num-strong': customer.overage_hours > 0 }">
-                      {{ formatHours(customer.overage_hours) }}
+                    <span :class="{ 'num-strong': customer.overage_seconds > 0 }">
+                      {{ customer.overage_seconds ? formatDuration(customer.overage_seconds) : '–' }}
                     </span>
                   </td>
                   <td class="num">{{ currency(customer.total_amount) }}</td>
@@ -377,7 +377,7 @@ onUnmounted(() => {
                 <td><StatusBadge :value="entry.source" kind="source" /></td>
                 <td class="num">{{ formatDuration(entry.duration_seconds) }}</td>
                 <td class="num">
-                  {{ entry.billable ? currency((entry.duration_seconds / 3600) * entry.hourly_rate) : '–' }}
+                  {{ entry.billable ? currency(entry.amount) : '–' }}
                 </td>
                 <td class="comment-cell">
                   <input

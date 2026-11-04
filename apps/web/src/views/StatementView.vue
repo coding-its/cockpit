@@ -45,8 +45,11 @@ const nonBillable = computed(
 const period = computed(() => {
   const value = statement.value
   if (!value?.first_date || !value.last_date) return ''
-  if (value.first_date === value.last_date) return formatDate(value.first_date)
-  return `${formatDate(value.first_date)} – ${formatDate(value.last_date)}`
+  const first = formatDate(value.first_date)
+  const last = formatDate(value.last_date)
+  // Die Zeitstempel unterscheiden sich um die Uhrzeit; für die Anzeige
+  // zählt nur, ob es derselbe Tag ist.
+  return first === last ? first : `${first} – ${last}`
 })
 
 async function load() {
@@ -201,10 +204,7 @@ onMounted(load)
           </tbody>
           <tfoot>
             <tr>
-              <td colspan="5">
-                Summe abrechenbare Zeit
-                <span class="statement-hours">{{ formatHours(statement.totals.billable_hours) }}</span>
-              </td>
+              <td colspan="5">Summe abrechenbare Zeit</td>
               <td class="num nowrap">
                 {{ formatDuration(statement.totals.billable_seconds) }}
               </td>
@@ -249,6 +249,11 @@ onMounted(load)
         {{ nonBillable.length === 1 ? 'Eintrag' : 'Einträge' }} mit
         {{ formatHours(statement.totals.non_billable_hours) }} nicht abrechenbarer Zeit.
         Sie werden beim Markieren trotzdem mit abgehakt.
+      </p>
+      <p class="report-note statement-basis">
+        Abgerechnet wird die tatsächlich erfasste Zeit, sekundengenau: Betrag je Position =
+        Dauer × Stundensatz, kaufmännisch auf Cent gerundet. Die Summe ist die Addition der
+        Einzelbeträge. Keine Mindestzeiten, keine Aufrundung.
       </p>
 
       <footer class="report-foot">

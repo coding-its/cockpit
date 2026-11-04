@@ -209,6 +209,8 @@ export interface TimeEntry {
   hourly_rate: number
   /** `null`, solange die Zeit noch nicht abgerechnet ist. */
   billed_at: string | null
+  /** Auf Cent gerundeter Betrag des Eintrags, vom Server gerechnet. */
+  amount: number
 }
 
 /** Aufstellung der noch offenen Zeiten eines Kunden. */
@@ -346,12 +348,15 @@ export interface BillingCustomer {
   customer_id: string
   customer_name: string
   short_code: string
+  billable_seconds: number
+  non_billable_seconds: number
   billable_hours: number
   non_billable_hours: number
   included_hours: number
   hourly_rate: number
   default_rate: boolean
   flat_fee: number
+  overage_seconds: number
   overage_hours: number
   time_amount: number
   total_amount: number
@@ -360,6 +365,7 @@ export interface BillingCustomer {
 export interface BillingSummary {
   month: string
   customers: BillingCustomer[]
+  total_billable_seconds: number
   total_billable_hours: number
   total_amount: number
 }
@@ -588,6 +594,8 @@ export interface CreateUserPayload {
 
 export interface ReportTotals {
   customers: number
+  billable_seconds: number
+  non_billable_seconds: number
   billable_hours: number
   non_billable_hours: number
   time_amount: number
@@ -657,6 +665,10 @@ export interface ReportBlock {
   hourly_rate: number
   rate_source: 'contract' | 'standard'
   flat_fee: number
+  /** Grundlage aller Beträge: die erfassten Sekunden. */
+  billable_seconds: number
+  non_billable_seconds: number
+  overage_seconds: number
   billable_hours: number
   non_billable_hours: number
   overage_hours: number

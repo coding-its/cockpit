@@ -14,6 +14,7 @@ use serde::Serialize;
 use sqlx::PgPool;
 
 use crate::billing::with_vat;
+use crate::reports::{seconds_to_amount, seconds_to_hours};
 use crate::settings::BillingSettings;
 use crate::util::now_iso;
 
@@ -213,7 +214,7 @@ fn build(kind: &str, owner: OwnerRow, rows: Vec<EntryRow>, billing: &BillingSett
 
     for row in rows {
         let amount = if row.billable {
-            round2(row.duration_seconds as f64 / 3600.0 * hourly_rate)
+            seconds_to_amount(row.duration_seconds, hourly_rate)
         } else {
             0.0
         };
@@ -249,8 +250,8 @@ fn build(kind: &str, owner: OwnerRow, rows: Vec<EntryRow>, billing: &BillingSett
     let last_date = entries.last().map(|entry| entry.date.clone());
 
     totals.entries = entries.len();
-    totals.billable_hours = round2(totals.billable_seconds as f64 / 3600.0);
-    totals.non_billable_hours = round2(totals.non_billable_seconds as f64 / 3600.0);
+    totals.billable_hours = seconds_to_hours(totals.billable_seconds);
+    totals.non_billable_hours = seconds_to_hours(totals.non_billable_seconds);
     totals.time_amount = round2(totals.time_amount);
 
     let (vat_amount, gross_amount) = with_vat(totals.time_amount, billing.vat_rate);

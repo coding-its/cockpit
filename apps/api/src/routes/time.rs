@@ -241,12 +241,14 @@ pub async fn list(
     Query(filter): Query<TimeEntryFilter>,
 ) -> ApiResult<Json<Vec<TimeEntryListItem>>> {
     let limit = filter.limit.unwrap_or(250).clamp(1, 1000);
+    let default_rate = crate::settings::default_hourly_rate(&state.pool).await;
     let entries = queries::time_entries(
         &state.pool,
         filter.customer_id.as_deref(),
         filter.web_client_id.as_deref(),
         filter.month.as_deref(),
         limit,
+        default_rate,
     )
     .await?;
 
@@ -356,7 +358,8 @@ pub async fn create(
     )
     .await?;
 
-    Ok(Json(queries::time_entry(&state.pool, &id).await?))
+    let default_rate = crate::settings::default_hourly_rate(&state.pool).await;
+    Ok(Json(queries::time_entry(&state.pool, &id, default_rate).await?))
 }
 
 pub async fn remove(
@@ -401,12 +404,14 @@ pub async fn export_csv(
     Query(filter): Query<ExportFilter>,
 ) -> ApiResult<Response> {
     let month = filter.month.unwrap_or_else(current_month);
+    let default_rate = crate::settings::default_hourly_rate(&state.pool).await;
     let entries = queries::time_entries(
         &state.pool,
         filter.customer_id.as_deref(),
         filter.web_client_id.as_deref(),
         Some(&month),
         10_000,
+        default_rate,
     )
     .await?;
 
@@ -416,7 +421,8 @@ pub async fn export_csv(
         entries
     };
 
-    let csv = export::to_csv(&entries).map_err(ApiError::Other)?;
+    let csv = export::to_csv(&entries, crate::settings::billing(&state.pool).await.vat_rate)
+        .map_err(ApiError::Other)?;
 
     audit(
         &state.pool,

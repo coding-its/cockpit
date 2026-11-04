@@ -394,6 +394,10 @@ pub struct TimeEntryListItem {
     pub hourly_rate: f64,
     /// `None` heißt: noch nicht abgerechnet.
     pub billed_at: Option<String>,
+    /// Betrag dieses Eintrags, auf Cent gerundet. Wird nach dem Lesen gesetzt,
+    /// damit Liste, Aufstellung und Bericht dieselbe Zahl zeigen.
+    #[sqlx(default)]
+    pub amount: f64,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -515,6 +519,9 @@ pub struct BillingCustomer {
     pub customer_id: String,
     pub customer_name: String,
     pub short_code: String,
+    /// Grundlage aller Beträge: die erfassten Sekunden.
+    pub billable_seconds: i64,
+    pub non_billable_seconds: i64,
     pub billable_hours: f64,
     pub non_billable_hours: f64,
     pub included_hours: f64,
@@ -522,6 +529,7 @@ pub struct BillingCustomer {
     /// `true`, wenn kein Vertragssatz vorliegt und der Standard-Satz greift.
     pub default_rate: bool,
     pub flat_fee: f64,
+    pub overage_seconds: i64,
     pub overage_hours: f64,
     pub time_amount: f64,
     pub total_amount: f64,
@@ -531,6 +539,7 @@ pub struct BillingCustomer {
 pub struct BillingSummary {
     pub month: String,
     pub customers: Vec<BillingCustomer>,
+    pub total_billable_seconds: i64,
     pub total_billable_hours: f64,
     pub total_amount: f64,
 }

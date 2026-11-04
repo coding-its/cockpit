@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.5_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.6_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -502,7 +502,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.5_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.6_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -577,6 +577,26 @@ deines Chefs mit einem eigenen Konto arbeiten, ohne irgendetwas ändern zu könn
 
 Jede Erzeugung landet als **„Monatsbericht erzeugt"** im Audit-Trail, mit Benutzer und Monat.
 
+## Wie abgerechnet wird
+
+Die Beträge folgen einer einzigen, nachrechenbaren Regel:
+
+1. Grundlage sind die **tatsächlich erfassten Sekunden**. Es gibt keine Mindestzeit und keine
+   Aufrundung – ein Klick von 30 Sekunden wird mit 30 Sekunden abgerechnet.
+2. **Betrag je Position** = Dauer × Stundensatz, kaufmännisch auf Cent gerundet.
+3. **Summe** = Addition der gerundeten Positionen. Damit ergibt die Addition der gedruckten
+   Zeilen genau den ausgewiesenen Betrag.
+4. Bei Verträgen mit **Inklusivstunden** wird nur der Überhang darüber berechnet; die Dauer
+   selbst bleibt vollständig sichtbar.
+5. Ohne Vertragssatz gilt der **Standard-Satz** aus den Einstellungen (Vorgabe 126,05 € netto).
+
+In allen Ansichten steht deshalb die **Dauer** neben dem Betrag, nicht eine auf zwei
+Nachkommastellen gerundete Stundenzahl: „43 s · 1,51 €" ist nachrechenbar, „0,01 h · 1,51 €"
+wäre es nicht. Die Zeitenliste, die Aufstellung und der Monatsbericht rechnen mit derselben
+Funktion im Backend, damit dieselbe Leistung überall denselben Betrag ergibt.
+
+Der CSV-Export enthält dieselben Beträge und den Steuersatz aus den Einstellungen.
+
 ## Offene Zeiten je Kunde (Abrechnung)
 
 Der Monatsbericht ist an einen Monat gebunden. Für den Abrechnungslauf gibt es daneben die
@@ -608,6 +628,7 @@ Monatsbericht und in der Zeitenliste; dort ist sie mit **abgerechnet** gekennzei
   Benutzer.
 - Enthält der Vertrag Inklusivstunden, weist die Aufstellung den vollen Aufwand aus und nennt das
   Inklusivvolumen als Hinweis – abgezogen wird es auf der Rechnung, nicht auf dem Leistungsnachweis.
+- Gerechnet wird sekundengenau nach der Regel unter „Wie abgerechnet wird".
 
 
 ## Patchstand und Antivirus

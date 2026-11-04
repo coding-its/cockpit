@@ -28,8 +28,8 @@ const SELECT_ENTRY: &str = r#"
         te.source,
         te.billed_at,
         COALESCE(
-            (SELECT hourly_rate FROM contracts WHERE customer_id = te.customer_id AND active = true LIMIT 1),
-            (SELECT hourly_rate FROM web_clients WHERE id = te.web_client_id),
+            NULLIF((SELECT hourly_rate FROM contracts WHERE customer_id = te.customer_id AND active = true LIMIT 1), 0),
+            NULLIF((SELECT hourly_rate FROM web_clients WHERE id = te.web_client_id), 0),
             0.0
         ) AS hourly_rate
     FROM time_entries te
@@ -116,6 +116,7 @@ pub async fn time_entries(
     web_client_id: Option<&str>,
     month: Option<&str>,
     limit: i64,
+    default_rate: f64,
 ) -> Result<Vec<TimeEntryListItem>, sqlx::Error> {
     let sql = format!(
         "{SELECT_ENTRY}
@@ -133,11 +134,13 @@ pub async fn time_entries(
         .bind(limit)
         .fetch_all(pool)
         .await
+        .map(|entries| apply_default_rate(entries, default_rate))
 }
 
 pub async fn time_entry(
     pool: &PgPool,
     id: &str,
+    default_rate: f64,
 ) -> Result<Option<TimeEntryListItem>, sqlx::Error> {
     let sql = format!("{SELECT_ENTRY} WHERE te.id = $1");
 
@@ -145,6 +148,29 @@ pub async fn time_entry(
         .bind(id)
         .fetch_optional(pool)
         .await
+        .map(|entry| entry.map(|entry| apply_default_rate(vec![entry], default_rate).remove(0)))
+}
+
+/// Ohne Vertragssatz und ohne Satz am Web-Kunden bleibt 0 stehen. Für die
+/// Anzeige gilt dann der Standard-Satz – sonst stünde in der Zeitenliste
+/// 0,00 €, obwohl der Kunde nach Standard-Satz abgerechnet wird. Danach wird
+/// der Betrag gesetzt, damit im Browser nicht anders gerundet wird als im
+/// Bericht.
+fn apply_default_rate(
+    mut entries: Vec<TimeEntryListItem>,
+    default_rate: f64,
+) -> Vec<TimeEntryListItem> {
+    for entry in &mut entries {
+        if entry.hourly_rate <= 0.0 {
+            entry.hourly_rate = default_rate;
+        }
+        entry.amount = if entry.billable {
+            crate::reports::seconds_to_amount(entry.duration_seconds, entry.hourly_rate)
+        } else {
+            0.0
+        };
+    }
+    entries
 }
 
 #[cfg(test)]
@@ -199,6 +225,73 @@ mod tests {
 
         assert_eq!(anna.id, "a");
         assert_eq!(ben.id, "b");
+    }
+
+    #[tokio::test]
+    async fn without_a_contract_the_standard_rate_is_shown() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('k1', 'Ohne Vertrag', 'OHV', true, '2026-11-01T08:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO time_entries
+                (id, customer_id, user_name, activity, started_at, ended_at,
+                 duration_seconds, billable, source, created_at)
+             VALUES ('e1', 'k1', 'S. Wolf', 'Fernwartung', '2026-11-03T09:00:00Z',
+                     '2026-11-03T10:00:00Z', 3600, true, 'timer', '2026-11-03T10:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Ohne Vertrag liefert die Abfrage 0 – die Anzeige bekommt den
+        // Standard-Satz, sonst stünde in der Zeitenliste 0,00 €.
+        let entries = time_entries(&pool, Some("k1"), None, None, 10, 126.05)
+            .await
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].hourly_rate, 126.05);
+
+        let single = time_entry(&pool, "e1", 126.05).await.unwrap().unwrap();
+        assert_eq!(single.hourly_rate, 126.05);
+    }
+
+    #[tokio::test]
+    async fn contract_rate_wins_over_the_standard_rate() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('k1', 'Mit Vertrag', 'MV', true, '2026-11-01T08:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO contracts (id, customer_id, name, included_hours, hourly_rate, flat_fee, active)
+             VALUES ('ct-k1', 'k1', 'Wartung', 0, 95, 0, true)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO time_entries
+                (id, customer_id, user_name, activity, started_at, ended_at,
+                 duration_seconds, billable, source, created_at)
+             VALUES ('e1', 'k1', 'S. Wolf', 'Fernwartung', '2026-11-03T09:00:00Z',
+                     '2026-11-03T10:00:00Z', 3600, true, 'timer', '2026-11-03T10:00:00Z')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let entries = time_entries(&pool, Some("k1"), None, None, 10, 126.05)
+            .await
+            .unwrap();
+        assert_eq!(entries[0].hourly_rate, 95.0);
     }
 
     #[tokio::test]

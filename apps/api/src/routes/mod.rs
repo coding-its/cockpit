@@ -411,7 +411,9 @@ pub async fn get_customer(
     .fetch_all(&state.pool)
     .await?;
 
-    let recent_time = queries::time_entries(&state.pool, Some(&id), None, None, 10).await?;
+    let default_rate = crate::settings::default_hourly_rate(&state.pool).await;
+    let recent_time =
+        queries::time_entries(&state.pool, Some(&id), None, None, 10, default_rate).await?;
 
     Ok(Json(CustomerDetail {
         customer,

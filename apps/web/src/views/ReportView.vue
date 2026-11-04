@@ -195,12 +195,14 @@ watch([month, includeIdle], load)
               </td>
               <td>{{ block.contract_name ?? '–' }}</td>
               <td class="num">
-                {{ formatHours(block.billable_hours) }}
+                {{ formatDuration(block.billable_seconds) }}
                 <span v-if="block.included_hours" class="report-included">
                   inkl. {{ formatHours(block.included_hours) }}
                 </span>
               </td>
-              <td class="num">{{ block.overage_hours ? formatHours(block.overage_hours) : '–' }}</td>
+              <td class="num">
+                {{ block.overage_seconds ? formatDuration(block.overage_seconds) : '–' }}
+              </td>
               <td class="num">
                 {{ block.hourly_rate ? currency(block.hourly_rate) : '–' }}
                 <span v-if="block.rate_source === 'standard'" class="report-included">Standard</span>
@@ -218,7 +220,7 @@ watch([month, includeIdle], load)
           <tfoot v-if="totals && orderedBlocks.length">
             <tr>
               <td colspan="2">Gesamt</td>
-              <td class="num">{{ formatHours(totals.billable_hours) }}</td>
+              <td class="num">{{ formatDuration(totals.billable_seconds) }}</td>
               <td colspan="2" />
               <td class="num">{{ currency(totals.time_amount) }}</td>
               <td class="num">{{ currency(totals.flat_fees) }}</td>
@@ -245,6 +247,12 @@ watch([month, includeIdle], load)
           Nicht abrechenbar in diesem Monat:
           {{ formatHours(totals?.non_billable_hours ?? 0) }} (interne Zeit, Maschinenzeit).
         </p>
+        <p class="report-note">
+          Abgerechnet wird die tatsächlich erfasste Zeit, sekundengenau – keine Mindestzeiten,
+          keine Aufrundung. Betrag je Position = Dauer × Stundensatz, kaufmännisch auf Cent
+          gerundet; die Summe ist die Addition dieser Positionen. Bei Verträgen mit
+          Inklusivvolumen wird nur der Überhang darüber berechnet.
+        </p>
       </section>
 
       <section
@@ -265,7 +273,7 @@ watch([month, includeIdle], load)
             <strong>{{ currency(block.total_amount) }}</strong>
             <small>
               netto · {{ currency(block.gross_amount) }} brutto ·
-              {{ formatHours(block.billable_hours) }} abrechenbar
+              {{ formatDuration(block.billable_seconds) }} abrechenbar
             </small>
             <button class="report-block-print no-print" @click="printBlock(block.customer_id)">
               <Printer :size="13" />

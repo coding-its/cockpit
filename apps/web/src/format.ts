@@ -42,13 +42,21 @@ export function formatHours(value: number): string {
   return `${formatted} h`
 }
 
+/**
+ * Dauer in Stunden, Minuten und Sekunden. Die Sekunden bleiben sichtbar,
+ * solange sie nicht null sind – sonst ließe sich der Betrag daneben nicht
+ * nachrechnen (1 h 30 min wäre 189,08 €, erfasst waren 190,59 €).
+ */
 export function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.round(seconds))
   const hours = Math.floor(total / 3600)
   const minutes = Math.floor((total % 3600) / 60)
   const rest = total % 60
 
-  if (hours > 0) return `${hours} h ${String(minutes).padStart(2, '0')} min`
+  if (hours > 0) {
+    const base = `${hours} h ${String(minutes).padStart(2, '0')} min`
+    return rest > 0 ? `${base} ${String(rest).padStart(2, '0')} s` : base
+  }
   if (minutes > 0) return `${minutes} min ${String(rest).padStart(2, '0')} s`
   return `${rest} s`
 }

@@ -67,8 +67,15 @@ Häufige Ursachen:
 | Symptom | Ursache |
 | --- | --- |
 | Fenster „Datenbank einrichten" erscheint | keine oder falsche Verbindung – normal beim ersten Start |
+| „Die Datenbank ist erreichbar, wurde aber von einer neueren Version … eingerichtet" | **Die Anwendung ist zu alt**, nicht die Verbindung: Ein anderer Arbeitsplatz hat die Datenbank schon aktualisiert. Installer der aktuellen Fassung ausführen – an den Daten ist nichts beschädigt |
 | Gar kein Fenster, Log fehlt | Absturz vor dem Start; meist fehlt **WebView2** (im Log: `webview2=nicht gefunden`) |
 | Gar kein Fenster, Log vorhanden | Meldung in der Logdatei lesen – meist Datenbank oder Berechtigungen |
+
+**Zur zweiten Zeile:** Das Schema der Datenbank wird beim Start ergänzt, sobald eine neuere
+Fassung läuft. Die anderen Rechner merken das beim nächsten Start – sie brauchen dann ebenfalls
+den neuen Installer. Damit das nicht als „Datenbank kaputt" missverstanden wird, nennt die
+Meldung den Schema-Stand, und **Verbindung testen** zeigt ihn vorab an
+(„… · Schema-Stand 2").
 
 WebView2 bringt Windows 11 mit. Auf älteren Windows-10-Rechnern installiert das MSI es
 nachträglich – dafür braucht der Rechner beim Installieren einmal Internetzugang.

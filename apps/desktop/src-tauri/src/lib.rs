@@ -484,6 +484,17 @@ load();
 fn startup_message(error: &str) -> String {
     let path = wartungscockpit_api::DbConfig::path();
 
+    // Schemaproblem: Die Verbindung stimmt, nur die Anwendung ist zu alt.
+    // Dann wäre „Angaben prüfen" ein falscher Rat.
+    if error.contains("neueren Version") || error.contains("Schema-Stand") {
+        return format!(
+            "{error}\n\nHinterlegte Verbindung: {}\n\n\
+             Diese Verbindung ist in Ordnung – es fehlt nur die aktuelle Version der \
+             Anwendung. Bitte den Installer ausführen.",
+            path.display()
+        );
+    }
+
     if path.exists() {
         return format!(
             "{error}\n\nHinterlegte Verbindung: {}\n\nBitte die Angaben prüfen oder hier korrigieren.",

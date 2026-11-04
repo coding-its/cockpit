@@ -2,6 +2,7 @@
   "name": "wartungscockpit",
   "version": "0.1.4",
   "private": true,
+  "license": "MIT",
   "description": "Wartungscockpit für NinjaOne und WordPress – Phase-0-Prototyp",
   "workspaces": [
     "apps/web"

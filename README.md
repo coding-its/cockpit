@@ -278,3 +278,10 @@ Bewusst nicht enthalten:
 - Mandantenfähigkeit, Kundenportal, Offline-PWA
 
 Live-Betrieb setzt voraus: API-Zugang im NinjaOne-Tarif, geklärte Webhook-Situation (nur ein Webhook pro Tenant), **Benutzerkontext für `script/run`** (Machine-Token wird dort abgelehnt), Backup-Strategie für WordPress und HTTPS.
+
+## Lizenz
+
+MIT – der vollständige Text steht in [LICENSE](LICENSE).
+
+Kurz gesagt: Nutzen, verändern, weitergeben und verkaufen ist erlaubt, solange der Copyright-Hinweis in Kopien erhalten bleibt. Es besteht keine Pflicht, den Quellcode offenzulegen, und es wird keine Gewähr übernommen. Wer die Anwendung unverändert an Kunden weitergibt, darf das also tun – muss die Lizenz aber mitliefern.
+

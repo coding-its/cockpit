@@ -3,6 +3,7 @@ name = "wartungscockpit-api"
 version = "0.1.0"
 edition = "2021"
 description = "API und Worker für das Wartungscockpit"
+license = "MIT"
 
 [lib]
 name = "wartungscockpit_api"

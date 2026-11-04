@@ -93,6 +93,7 @@ mod tests {
             billable: true,
             source: "timer".to_string(),
             hourly_rate: 95.0,
+            billed_at: None,
         }
     }
 

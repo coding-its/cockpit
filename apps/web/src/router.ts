@@ -40,6 +40,12 @@ const router = createRouter({
       meta: { title: 'Kundendetails' },
     },
     {
+      path: '/kunden/:id/abrechnung',
+      name: 'statement',
+      component: () => import('./views/StatementView.vue'),
+      meta: { title: 'Abrechnung' },
+    },
+    {
       path: '/einsaetze',
       name: 'tickets',
       component: () => import('./views/TicketsView.vue'),
@@ -56,6 +62,12 @@ const router = createRouter({
       name: 'webclient',
       component: () => import('./views/WebClientView.vue'),
       meta: { title: 'Web-Kunde' },
+    },
+    {
+      path: '/websites/:id/abrechnung',
+      name: 'web-statement',
+      component: () => import('./views/StatementView.vue'),
+      meta: { title: 'Abrechnung' },
     },
     {
       path: '/wartungen',

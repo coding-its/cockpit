@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.4_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.5_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -502,7 +502,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.4_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.5_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -576,6 +576,39 @@ einer Seite.
 deines Chefs mit einem eigenen Konto arbeiten, ohne irgendetwas ändern zu können.
 
 Jede Erzeugung landet als **„Monatsbericht erzeugt"** im Audit-Trail, mit Benutzer und Monat.
+
+## Offene Zeiten je Kunde (Abrechnung)
+
+Der Monatsbericht ist an einen Monat gebunden. Für den Abrechnungslauf gibt es daneben die
+**Aufstellung offener Leistungen**: Sie sammelt alles, was noch nicht abgerechnet ist – auch über
+einen Monatswechsel hinweg.
+
+**Wo:** In der Kundenansicht oben rechts **Offene Zeiten drucken** (und noch einmal am Kopf der
+Liste „Letzte Zeiten"). Bei Web-Kunden derselbe Knopf auf der Seite des Web-Kunden.
+
+**Was drin steht:** Je Zeile Datum, Leistung, Kommentar, Bezug (Gerät oder Website), Person, Dauer
+und Betrag. Darunter die Summe der abrechenbaren Zeit, die Umsatzsteuer und der Bruttobetrag –
+gerechnet mit dem Stundensatz aus dem Vertrag, sonst mit dem Standard-Satz 126,05 € netto.
+Nicht abrechenbare Einträge (interne Zeit) stehen nicht auf dem Papier, werden aber beim
+Abhaken mit erfasst.
+
+**Abrechnen:** **Drucken / als PDF speichern** öffnet den Druckdialog. Danach – wenn die Rechnung
+geschrieben ist – **Als abgerechnet markieren**. Die Einträge bekommen damit eine Marke und
+erscheinen beim nächsten Aufruf nicht mehr. Die Zeit selbst bleibt erhalten und steht weiter im
+Monatsbericht und in der Zeitenliste; dort ist sie mit **abgerechnet** gekennzeichnet.
+
+**Gut zu wissen:**
+
+- Der laufende Timer zählt nicht mit – er hat noch keine endgültige Dauer.
+- Alte Einträge ohne Marke sind beim ersten Aufruf alle offen. Wer schon abgerechnet hat, kann
+  sie mit einem Klick nachziehen.
+- Ein zweiter Klick auf **Als abgerechnet markieren** ändert nichts: Der Zeitpunkt bleibt der
+  erste, und fremde Einträge werden nie mit abgehakt.
+- Der Vorgang landet als **„Zeiten als abgerechnet markiert"** im Audit-Trail, mit Anzahl und
+  Benutzer.
+- Enthält der Vertrag Inklusivstunden, weist die Aufstellung den vollen Aufwand aus und nennt das
+  Inklusivvolumen als Hinweis – abgezogen wird es auf der Rechnung, nicht auf dem Leistungsnachweis.
+
 
 ## Patchstand und Antivirus
 

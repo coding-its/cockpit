@@ -26,6 +26,11 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/v1/customers", get(list_customers))
         .route("/api/v1/customers/{id}", get(get_customer))
         .route("/api/v1/customers/{id}/focus", axum::routing::patch(set_customer_focus))
+        .route("/api/v1/customers/{id}/statement", get(customer_statement))
+        .route(
+            "/api/v1/customers/{id}/statement/billed",
+            post(mark_customer_statement),
+        )
         .route("/api/v1/sites", post(create_site))
         .route("/api/v1/sites/{id}/agent", get(site_agent_status).patch(set_site_agent))
         .route("/api/v1/runs", get(list_runs).post(create_run))
@@ -1792,6 +1797,54 @@ pub async fn monthly_report(
     .await?;
 
     Ok(Json(report))
+}
+
+/// Aufstellung der noch nicht abgerechneten Zeiten eines Kunden.
+///
+/// Der Bericht oben ist monatsgebunden; hier geht es um den Abrechnungslauf:
+/// alles Offene bis heute, unabhängig vom Monatswechsel.
+pub async fn customer_statement(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<crate::statement::Statement>> {
+    let billing = crate::settings::billing(&state.pool).await;
+
+    let mut statement = crate::statement::for_customer(&state.pool, &id, &billing)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Kunde {id} nicht gefunden")))?;
+
+    statement.generated_by = user.display_name.clone();
+
+    Ok(Json(statement))
+}
+
+/// Markiert die gedruckten Zeiten als abgerechnet.
+///
+/// Die Einträge kommen aus der Aufstellung zurück; nur offene Einträge dieses
+/// Kunden werden gesetzt. Ein zweiter Aufruf ändert also nichts.
+pub async fn mark_customer_statement(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(payload): Json<BilledRequest>,
+) -> ApiResult<Json<BilledResponse>> {
+    let marked = crate::statement::mark_billed(&state.pool, "customer", &id, &payload.entry_ids)
+        .await?;
+
+    if marked > 0 {
+        audit(
+            &state.pool,
+            user.actor(),
+            "Zeiten als abgerechnet markiert",
+            Some("customer"),
+            Some(&id),
+            &format!("{marked} Einträge"),
+        )
+        .await?;
+    }
+
+    Ok(Json(BilledResponse { marked }))
 }
 
 /// Gespeicherte Patches eines Geräts: zuerst offene, dann abgelehnte.

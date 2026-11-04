@@ -26,6 +26,7 @@ const SELECT_ENTRY: &str = r#"
         te.duration_seconds,
         te.billable,
         te.source,
+        te.billed_at,
         COALESCE(
             (SELECT hourly_rate FROM contracts WHERE customer_id = te.customer_id AND active = true LIMIT 1),
             (SELECT hourly_rate FROM web_clients WHERE id = te.web_client_id),

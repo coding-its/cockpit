@@ -23,6 +23,7 @@ mod reports;
 mod routes;
 mod seed;
 mod settings;
+mod statement;
 mod state;
 mod util;
 mod wordpress;

@@ -392,6 +392,8 @@ pub struct TimeEntryListItem {
     pub billable: bool,
     pub source: String,
     pub hourly_rate: f64,
+    /// `None` heißt: noch nicht abgerechnet.
+    pub billed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -701,6 +703,18 @@ pub struct ExportFilter {
 #[derive(Debug, Deserialize)]
 pub struct BillingFilter {
     pub month: Option<String>,
+}
+
+/// Auswahl der Zeiten, die als abgerechnet markiert werden sollen.
+#[derive(Debug, Deserialize)]
+pub struct BilledRequest {
+    pub entry_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BilledResponse {
+    /// Wie viele Einträge tatsächlich neu markiert wurden.
+    pub marked: u64,
 }
 
 #[derive(Debug, Deserialize)]

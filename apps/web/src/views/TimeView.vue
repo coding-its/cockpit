@@ -356,7 +356,12 @@ onUnmounted(() => {
             </thead>
             <tbody>
               <tr v-for="entry in entries" :key="entry.id">
-                <td>{{ formatDate(entry.started_at) }}</td>
+                <td>
+                  <div class="stacked-cell">
+                    <span>{{ formatDate(entry.started_at) }}</span>
+                    <small v-if="entry.billed_at">abgerechnet</small>
+                  </div>
+                </td>
                 <td>
                   <div class="stacked-cell">
                     <span>{{ entry.owner_short_code }}</span>

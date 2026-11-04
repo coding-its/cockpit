@@ -22,6 +22,7 @@ import {
   Play,
   Plus,
   Power,
+  Printer,
   Server,
   ShieldAlert,
   ShieldCheck,
@@ -572,10 +573,20 @@ onUnmounted(() => {
     </div>
 
     <template v-else-if="detail">
-      <div class="breadcrumb">
-        <RouterLink to="/kunden">Kunden</RouterLink>
-        <ChevronRight :size="14" />
-        <span>{{ detail.customer.name }}</span>
+      <div class="page-toolbar">
+        <div class="breadcrumb">
+          <RouterLink to="/kunden">Kunden</RouterLink>
+          <ChevronRight :size="14" />
+          <span>{{ detail.customer.name }}</span>
+        </div>
+        <RouterLink
+          :to="`/kunden/${detail.customer.id}/abrechnung`"
+          class="btn btn-ghost btn--sm"
+          title="Noch nicht abgerechnete Zeiten als Aufstellung drucken"
+        >
+          <Printer :size="14" />
+          Offene Zeiten drucken
+        </RouterLink>
       </div>
 
       <section class="card customer-header">
@@ -1072,7 +1083,16 @@ onUnmounted(() => {
             <h2>Letzte Zeiten</h2>
             <p>{{ formatDuration(totalRecentTime) }} in den letzten Einträgen</p>
           </div>
-          <RouterLink to="/zeiten" class="link">Alle Zeiten</RouterLink>
+          <div class="head-actions">
+            <RouterLink
+              :to="`/kunden/${detail.customer.id}/abrechnung`"
+              class="btn btn-ghost btn--sm"
+            >
+              <Printer :size="14" />
+              Abrechnung
+            </RouterLink>
+            <RouterLink to="/zeiten" class="link">Alle Zeiten</RouterLink>
+          </div>
         </header>
 
         <div v-if="detail.recent_time.length" class="table-wrap">

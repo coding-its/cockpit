@@ -18,6 +18,7 @@ import {
   Pencil,
   Play,
   Plus,
+  Printer,
   Save,
   ShieldAlert,
   MessageSquarePlus,
@@ -559,10 +560,20 @@ onUnmounted(() => {
     </div>
 
     <template v-else-if="detail">
-      <div class="breadcrumb">
-        <RouterLink to="/websites">Websites</RouterLink>
-        <ChevronRight :size="14" />
-        <span>{{ detail.client.name }}</span>
+      <div class="page-toolbar">
+        <div class="breadcrumb">
+          <RouterLink to="/websites">Websites</RouterLink>
+          <ChevronRight :size="14" />
+          <span>{{ detail.client.name }}</span>
+        </div>
+        <RouterLink
+          :to="`/websites/${detail.client.id}/abrechnung`"
+          class="btn btn-ghost btn--sm"
+          title="Noch nicht abgerechnete Zeiten als Aufstellung drucken"
+        >
+          <Printer :size="14" />
+          Offene Zeiten drucken
+        </RouterLink>
       </div>
 
       <section class="card customer-header">

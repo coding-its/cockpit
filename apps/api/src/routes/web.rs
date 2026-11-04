@@ -30,6 +30,14 @@ pub fn router(_state: SharedState) -> Router<SharedState> {
         )
         .route("/api/v1/web-clients/{id}/sites", post(create_site))
         .route(
+            "/api/v1/web-clients/{id}/statement",
+            get(web_statement),
+        )
+        .route(
+            "/api/v1/web-clients/{id}/statement/billed",
+            post(mark_web_statement),
+        )
+        .route(
             "/api/v1/web-sites/{id}",
             axum::routing::patch(update_site).delete(delete_site),
         )
@@ -146,6 +154,48 @@ pub async fn create_client(
     .await?;
 
     Ok(Json(fetch_client(&state.pool, &id).await?))
+}
+
+/// Aufstellung der noch nicht abgerechneten Zeiten eines Web-Kunden.
+pub async fn web_statement(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<crate::statement::Statement>> {
+    let billing = crate::settings::billing(&state.pool).await;
+
+    let mut statement = crate::statement::for_web_client(&state.pool, &id, &billing)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Web-Kunde {id} nicht gefunden")))?;
+
+    statement.generated_by = user.display_name.clone();
+
+    Ok(Json(statement))
+}
+
+/// Markiert die gedruckten Zeiten eines Web-Kunden als abgerechnet.
+pub async fn mark_web_statement(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(payload): Json<BilledRequest>,
+) -> ApiResult<Json<BilledResponse>> {
+    let marked =
+        crate::statement::mark_billed(&state.pool, "web", &id, &payload.entry_ids).await?;
+
+    if marked > 0 {
+        audit(
+            &state.pool,
+            user.actor(),
+            "Zeiten als abgerechnet markiert",
+            Some("web_client"),
+            Some(&id),
+            &format!("{marked} Einträge"),
+        )
+        .await?;
+    }
+
+    Ok(Json(BilledResponse { marked }))
 }
 
 pub async fn get_client(

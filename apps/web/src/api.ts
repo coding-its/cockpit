@@ -33,6 +33,7 @@ import type {
   RunListItem,
   Site,
   SiteAgentStatus,
+  Statement,
   SyncResult,
   Task,
   TimeEntry,
@@ -328,6 +329,20 @@ export const api = {
     ),
   billing: (month: string) =>
     request<BillingSummary>(`/billing/summary?month=${encodeURIComponent(month)}`),
+  statement: (customerId: string) =>
+    request<Statement>(`/customers/${customerId}/statement`),
+  markStatementBilled: (customerId: string, entryIds: string[]) =>
+    request<{ marked: number }>(`/customers/${customerId}/statement/billed`, {
+      method: 'POST',
+      body: JSON.stringify({ entry_ids: entryIds }),
+    }),
+  webStatement: (webClientId: string) =>
+    request<Statement>(`/web-clients/${webClientId}/statement`),
+  markWebStatementBilled: (webClientId: string, entryIds: string[]) =>
+    request<{ marked: number }>(`/web-clients/${webClientId}/statement/billed`, {
+      method: 'POST',
+      body: JSON.stringify({ entry_ids: entryIds }),
+    }),
   exportCsv: (month: string) => {
     window.open(`${BASE}/export/time-entries.csv?month=${encodeURIComponent(month)}`, '_blank')
   },

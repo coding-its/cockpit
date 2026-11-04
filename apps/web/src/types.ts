@@ -207,6 +207,53 @@ export interface TimeEntry {
   billable: boolean
   source: 'timer' | 'manual' | 'machine'
   hourly_rate: number
+  /** `null`, solange die Zeit noch nicht abgerechnet ist. */
+  billed_at: string | null
+}
+
+/** Aufstellung der noch offenen Zeiten eines Kunden. */
+export interface Statement {
+  kind: 'customer' | 'web'
+  owner_id: string
+  name: string
+  short_code: string
+  contact_name: string | null
+  contact_email: string | null
+  phone: string | null
+  contract_name: string | null
+  included_hours: number
+  hourly_rate: number
+  rate_source: 'contract' | 'standard'
+  generated_at: string
+  generated_by: string
+  first_date: string | null
+  last_date: string | null
+  entries: StatementEntry[]
+  totals: StatementTotals
+}
+
+export interface StatementEntry {
+  id: string
+  date: string
+  activity: string
+  comment: string | null
+  context: string | null
+  user_name: string
+  duration_seconds: number
+  billable: boolean
+  amount: number
+}
+
+export interface StatementTotals {
+  entries: number
+  billable_seconds: number
+  non_billable_seconds: number
+  billable_hours: number
+  non_billable_hours: number
+  time_amount: number
+  vat_rate: number
+  vat_amount: number
+  gross_amount: number
 }
 
 export interface ActiveTimer {

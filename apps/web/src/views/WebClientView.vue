@@ -31,6 +31,7 @@ import {
 } from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
 import type {
+  Account,
   CreateWebSitePayload,
   Site,
   TimeEntry,
@@ -59,6 +60,9 @@ const router = useRouter()
 const store = useAppStore()
 
 const detail = ref<WebClientDetail | null>(null)
+const accounts = ref<Account[]>([])
+const accountBusy = ref(false)
+const accountError = ref('')
 const loading = ref(true)
 const error = ref('')
 const siteModalOpen = ref(false)
@@ -152,7 +156,12 @@ function actionTone(status: string): 'teal' | 'amber' | 'red' {
 async function load(initial = false) {
   if (initial) loading.value = true
   try {
-    detail.value = await api.webClient(clientId.value)
+    const [client, accountList] = await Promise.all([
+      api.webClient(clientId.value),
+      api.accounts().catch(() => [] as Account[]),
+    ])
+    accounts.value = accountList
+    detail.value = client
     error.value = ''
     for (const entry of detail.value.time_entries) {
       commentDraft.value[entry.id] = entry.note ?? ''
@@ -161,6 +170,20 @@ async function load(initial = false) {
     if (!error.value) error.value = errorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+/// Ordnet den Web-Kunden einem Abrechnungskonto zu (oder löst die Zuordnung).
+async function changeAccount(value: string) {
+  accountBusy.value = true
+  accountError.value = ''
+  try {
+    await api.setWebClientAccount(clientId.value, value || null)
+    await load()
+  } catch (caught) {
+    accountError.value = errorMessage(caught)
+  } finally {
+    accountBusy.value = false
   }
 }
 
@@ -591,6 +614,26 @@ onUnmounted(() => {
               <span>{{ detail.client.phone ?? '–' }}</span>
               <span>{{ currency(detail.client.hourly_rate) }} / Stunde</span>
             </div>
+            <label class="account-picker">
+              <Globe2 :size="14" />
+              <span>Abrechnungskonto</span>
+              <select
+                :value="detail.client.account_id ?? ''"
+                :disabled="accountBusy"
+                @change="changeAccount(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">– keins (eigene Rechnung) –</option>
+                <option v-for="account in accounts" :key="account.id" :value="account.id">
+                  {{ account.code }} · {{ account.name }}
+                </option>
+              </select>
+              <span v-if="detail.client.account_code" class="account-tag">
+                Rechnung über {{ detail.client.account_code }}
+              </span>
+            </label>
+            <p v-if="accountError" class="settings-message settings-message--error">
+              {{ accountError }}
+            </p>
           </div>
         </div>
         <div class="customer-badges">

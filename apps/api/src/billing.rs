@@ -19,6 +19,10 @@ struct BillingRow {
     amount_own_rate: f64,
     /// Dieselbe Summe, gerechnet mit dem Standard-Satz.
     amount_default_rate: f64,
+    account_id: Option<String>,
+    account_code: Option<String>,
+    /// Satz, der für dieses Konto gilt (Vertrag des Kontos, sonst eigener).
+    effective_rate: f64,
 }
 
 /// `default_rate` greift, wo im Vertrag kein Stundensatz gepflegt ist.
@@ -41,11 +45,13 @@ pub async fn summary(
             c.short_code,
             CAST(COALESCE(ct.included_hours, 0) AS DOUBLE PRECISION) AS included_hours,
             CAST(COALESCE(ct.hourly_rate, 0) AS DOUBLE PRECISION) AS hourly_rate,
+            CAST(COALESCE(acct.hourly_rate, ct.hourly_rate, 0) AS DOUBLE PRECISION) AS effective_rate,
             CAST(COALESCE(ct.flat_fee, 0) AS DOUBLE PRECISION) AS flat_fee,
+            c.account_id, ca.code AS account_code,
             COALESCE(SUM(CASE WHEN te.billable = true THEN te.duration_seconds ELSE 0 END), 0)::bigint AS billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = false THEN te.duration_seconds ELSE 0 END), 0)::bigint AS non_billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = true THEN
-                round(te.duration_seconds * COALESCE(ct.hourly_rate, 0) / 3600.0 * 100) / 100
+                round(te.duration_seconds * COALESCE(acct.hourly_rate, ct.hourly_rate, 0) / 3600.0 * 100) / 100
             ELSE 0 END), 0)::double precision AS amount_own_rate,
             COALESCE(SUM(CASE WHEN te.billable = true THEN
                 round(te.duration_seconds * $3 / 3600.0 * 100) / 100
@@ -54,12 +60,20 @@ pub async fn summary(
         LEFT JOIN contracts ct ON ct.id = (
             SELECT id FROM contracts WHERE customer_id = c.id AND active = true LIMIT 1
         )
+        LEFT JOIN accounts ca ON ca.id = c.account_id
+        LEFT JOIN contracts acct ON acct.id = (
+            SELECT ct2.id FROM contracts ct2
+            JOIN customers c2 ON c2.id = ct2.customer_id
+            WHERE ct2.active AND c2.account_id = c.account_id
+            ORDER BY ct2.name LIMIT 1
+        )
         LEFT JOIN time_entries te
             ON te.customer_id = c.id
             AND substr(te.started_at, 1, 7) = $1
         WHERE c.active = true
           AND (NOT $2 OR c.focus = true)
-        GROUP BY c.id, c.name, c.short_code, ct.included_hours, ct.hourly_rate, ct.flat_fee
+        GROUP BY c.id, c.name, c.short_code, ct.included_hours, ct.hourly_rate, ct.flat_fee,
+                 c.account_id, ca.code, acct.hourly_rate
 
         UNION ALL
 
@@ -69,21 +83,30 @@ pub async fn summary(
             w.short_code,
             0.0 AS included_hours,
             CAST(w.hourly_rate AS DOUBLE PRECISION) AS hourly_rate,
+            CAST(COALESCE(acct.hourly_rate, w.hourly_rate, 0) AS DOUBLE PRECISION) AS effective_rate,
             0.0 AS flat_fee,
+            w.account_id, wa.code AS account_code,
             COALESCE(SUM(CASE WHEN te.billable = true THEN te.duration_seconds ELSE 0 END), 0)::bigint AS billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = false THEN te.duration_seconds ELSE 0 END), 0)::bigint AS non_billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = true THEN
-                round(te.duration_seconds * COALESCE(w.hourly_rate, 0) / 3600.0 * 100) / 100
+                round(te.duration_seconds * COALESCE(acct.hourly_rate, w.hourly_rate, 0) / 3600.0 * 100) / 100
             ELSE 0 END), 0)::double precision AS amount_own_rate,
             COALESCE(SUM(CASE WHEN te.billable = true THEN
                 round(te.duration_seconds * $3 / 3600.0 * 100) / 100
             ELSE 0 END), 0)::double precision AS amount_default_rate
         FROM web_clients w
+        LEFT JOIN accounts wa ON wa.id = w.account_id
+        LEFT JOIN contracts acct ON acct.id = (
+            SELECT ct2.id FROM contracts ct2
+            JOIN customers c2 ON c2.id = ct2.customer_id
+            WHERE ct2.active AND c2.account_id = w.account_id
+            ORDER BY ct2.name LIMIT 1
+        )
         LEFT JOIN time_entries te
             ON te.web_client_id = w.id
             AND substr(te.started_at, 1, 7) = $1
         WHERE w.active = true
-        GROUP BY w.id, w.name, w.short_code, w.hourly_rate
+        GROUP BY w.id, w.name, w.short_code, w.hourly_rate, w.account_id, wa.code, acct.hourly_rate
         )
         ORDER BY customer_name
         "#,
@@ -94,16 +117,17 @@ pub async fn summary(
     .fetch_all(pool)
     .await?;
 
-    let mut customers = Vec::with_capacity(rows.len());
-    let mut total_billable_seconds = 0i64;
-    let mut total_amount = 0.0;
+    // Erst je Datensatz rechnen, dann Konten zusammenfassen – dieselbe
+    // Reihenfolge wie im Bericht, damit die Zahlen überall übereinstimmen.
+    let mut per_source: Vec<(Option<String>, BillingCustomer)> = Vec::with_capacity(rows.len());
 
     for row in rows {
-        let uses_default = row.hourly_rate <= 0.0;
+        // Der Kontosatz hat Vorrang vor dem eigenen Datensatz.
+        let uses_default = row.effective_rate <= 0.0;
         let hourly_rate = if uses_default {
             default_rate
         } else {
-            row.hourly_rate
+            row.effective_rate
         };
 
         // Rechtsgrundlage der Beträge: der eigene Satz, sonst der Standard-Satz.
@@ -117,26 +141,39 @@ pub async fn summary(
         let total = round2(row.flat_fee + time_amount);
         let overage = overage_seconds(row.billable_seconds, row.included_hours);
 
-        total_billable_seconds += row.billable_seconds;
-        total_amount += total;
+        let key = row.account_id.clone();
+        let short_code = row.account_code.clone().unwrap_or(row.short_code.clone());
 
-        customers.push(BillingCustomer {
-            customer_id: row.customer_id,
-            customer_name: row.customer_name,
-            short_code: row.short_code,
-            billable_seconds: row.billable_seconds,
-            non_billable_seconds: row.non_billable_seconds,
-            billable_hours: seconds_to_hours(row.billable_seconds),
-            non_billable_hours: seconds_to_hours(row.non_billable_seconds),
-            included_hours: row.included_hours,
-            hourly_rate,
-            default_rate: uses_default,
-            flat_fee: row.flat_fee,
-            overage_seconds: overage,
-            overage_hours: seconds_to_hours(overage),
-            time_amount,
-            total_amount: total,
-        });
+        per_source.push((
+            key,
+            BillingCustomer {
+                customer_id: row.customer_id,
+                customer_name: row.customer_name,
+                short_code,
+                billable_seconds: row.billable_seconds,
+                non_billable_seconds: row.non_billable_seconds,
+                billable_hours: seconds_to_hours(row.billable_seconds),
+                non_billable_hours: seconds_to_hours(row.non_billable_seconds),
+                included_hours: row.included_hours,
+                hourly_rate,
+                default_rate: uses_default,
+                flat_fee: row.flat_fee,
+                overage_seconds: overage,
+                overage_hours: seconds_to_hours(overage),
+                time_amount,
+                total_amount: total,
+                account_id: row.account_id,
+                account_code: row.account_code,
+            },
+        ));
+    }
+
+    let customers = merge_by_account(per_source);
+    let mut total_billable_seconds = 0i64;
+    let mut total_amount = 0.0;
+    for customer in &customers {
+        total_billable_seconds += customer.billable_seconds;
+        total_amount += customer.total_amount;
     }
 
     Ok(BillingSummary {
@@ -146,6 +183,70 @@ pub async fn summary(
         total_billable_hours: seconds_to_hours(total_billable_seconds),
         total_amount: round2(total_amount),
     })
+}
+
+
+/// Fasst Datensätze desselben Abrechnungskontos zu einer Zeile zusammen.
+///
+/// Satz und Inklusivvolumen kommen aus dem Mitglied mit Vertrag, die Zeiten
+/// werden addiert. Ohne Konto bleibt jede Zeile einzeln.
+fn merge_by_account(rows: Vec<(Option<String>, BillingCustomer)>) -> Vec<BillingCustomer> {
+    use std::collections::BTreeMap;
+
+    let mut groups: BTreeMap<String, Vec<BillingCustomer>> = BTreeMap::new();
+    for (account_id, customer) in rows {
+        let key = match account_id {
+            Some(id) => format!("account:{id}"),
+            None => format!("source:{}", customer.customer_id),
+        };
+        groups.entry(key).or_default().push(customer);
+    }
+
+    let mut merged = Vec::with_capacity(groups.len());
+
+    for (_, mut group) in groups {
+        if group.len() == 1 {
+            merged.push(group.remove(0));
+            continue;
+        }
+
+        // Zeile mit Vertrag führt; sie liefert Name und Satz.
+        group.sort_by(|a, b| {
+            let a_contract = !a.default_rate || a.included_hours > 0.0;
+            let b_contract = !b.default_rate || b.included_hours > 0.0;
+            b_contract.cmp(&a_contract)
+        });
+
+        let lead = group[0].clone();
+        let billable_seconds: i64 = group.iter().map(|c| c.billable_seconds).sum();
+        let non_billable_seconds: i64 = group.iter().map(|c| c.non_billable_seconds).sum();
+        let time_amount = round2(group.iter().map(|c| c.time_amount).sum::<f64>());
+        let total_amount = round2(group.iter().map(|c| c.total_amount).sum::<f64>());
+        let overage = overage_seconds(billable_seconds, lead.included_hours);
+
+        merged.push(BillingCustomer {
+            customer_id: lead.customer_id,
+            customer_name: lead.customer_name,
+            short_code: lead.short_code,
+            billable_seconds,
+            non_billable_seconds,
+            billable_hours: seconds_to_hours(billable_seconds),
+            non_billable_hours: seconds_to_hours(non_billable_seconds),
+            included_hours: lead.included_hours,
+            hourly_rate: lead.hourly_rate,
+            default_rate: lead.default_rate,
+            flat_fee: round2(group.iter().map(|c| c.flat_fee).sum::<f64>()),
+            overage_seconds: overage,
+            overage_hours: seconds_to_hours(overage),
+            time_amount,
+            total_amount,
+            account_id: lead.account_id,
+            account_code: lead.account_code,
+        });
+    }
+
+    merged.sort_by(|a, b| a.customer_name.cmp(&b.customer_name));
+    merged
 }
 
 /// Netto- und Bruttobetrag zu einem Nettobetrag, mit übergebenem Steuersatz.
@@ -266,6 +367,59 @@ mod tests {
 
         assert_eq!(row.overage_seconds, 0);
         assert_eq!(row.time_amount, 0.0);
+    }
+
+
+    #[tokio::test]
+    async fn one_account_gives_one_row_at_the_contract_rate() {
+        let (_guard, pool) = testdb::fixture().await;
+        let account = crate::accounts::create(&pool, "MWK", "Musterwerk GmbH")
+            .await
+            .unwrap()
+            .unwrap();
+
+        customer(&pool, "c1", 100.0, 0.0).await;
+        sqlx::query(
+            "INSERT INTO web_clients (id, name, short_code, active, created_at)
+             VALUES ('w1', 'Musterwerk Web', 'AHSW', true, $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("UPDATE customers SET account_id = $1 WHERE id = 'c1'")
+            .bind(&account.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE web_clients SET account_id = $1 WHERE id = 'w1'")
+            .bind(&account.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        entry(&pool, "e1", "c1", 3600).await;
+        sqlx::query(
+            "INSERT INTO time_entries
+                (id, web_client_id, user_name, activity, started_at, ended_at,
+                 duration_seconds, billable, source, created_at)
+             VALUES ('e2', 'w1', 'S. Wolf', 'Webseite', '2026-11-03T10:00:00',
+                     '2026-11-03T11:00:00', 1800, true, 'timer', $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = summary(&pool, "2026-11", false, 126.05).await.unwrap();
+
+        assert_eq!(result.customers.len(), 1, "eine Firma, eine Zeile");
+        let row = &result.customers[0];
+        assert_eq!(row.billable_seconds, 5400);
+        // Beide Teile mit dem Vertragssatz 100 €, nicht einmal 126,05 €.
+        assert_eq!(row.hourly_rate, 100.0);
+        assert_eq!(row.time_amount, 150.0);
+        assert_eq!(row.account_code.as_deref(), Some("MWK"));
     }
 
     #[test]

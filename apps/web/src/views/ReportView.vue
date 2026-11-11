@@ -26,8 +26,14 @@ const standardRate = computed(() =>
   blocks.value.filter((block) => block.rate_source === 'standard' && block.billable_hours > 0),
 )
 
-/** Aktuell gedruckter Kunde – `null` heißt: ganzer Bericht. */
+/** Aktuell gedruckter Block – `null` heißt: ganzer Bericht. */
 const printTarget = ref<string | null>(null)
+
+/// Ein Block ist ein Konto oder ein einzelner Kunde; der Schlüssel muss stabil
+/// sein, sonst druckt „nur diesen Kunden" den falschen Bogen.
+function blockKey(block: { account_id: string | null; customer_id: string }): string {
+  return block.account_id ?? `source:${block.customer_id}`
+}
 const totals = computed(() => report.value?.totals ?? null)
 
 /** Alphabetisch – der Bericht wird am Monatsende von oben nach unten abgearbeitet. */
@@ -60,8 +66,8 @@ function printReport() {
  * Druckt nur den Block eines Kunden. Der Filter greift erst, wenn Vue den
  * Rahmen neu gezeichnet hat – sonst würde der volle Bericht auf dem Papier landen.
  */
-async function printBlock(customerId: string) {
-  printTarget.value = customerId
+async function printBlock(key: string) {
+  printTarget.value = key
   await nextTick()
   window.print()
   printTarget.value = null
@@ -259,7 +265,7 @@ watch([month, includeIdle], load)
         v-for="block in orderedBlocks"
         :key="`detail-${block.customer_id}`"
         class="report-block"
-        :class="{ 'is-print-target': printTarget === block.customer_id }"
+        :class="{ 'is-print-target': printTarget === blockKey(block) }"
       >
         <header class="report-block-head">
           <div>
@@ -268,6 +274,13 @@ watch([month, includeIdle], load)
               <span class="report-code">{{ block.short_code }}</span>
             </h2>
             <p v-if="metaLine(block)" class="report-block-meta">{{ metaLine(block) }}</p>
+            <p v-if="block.members.length > 1" class="report-block-meta">
+              Zusammengefasst: {{ block.members.join(' · ') }}
+            </p>
+            <p v-if="block.contract_conflict" class="report-note report-note--warn">
+              In diesem Konto sind mehrere Verträge hinterlegt. Berechnet wurde nach
+              „{{ block.contract_name }}“. Bitte die Zuordnung prüfen.
+            </p>
           </div>
           <div class="report-block-amount">
             <strong>{{ currency(block.total_amount) }}</strong>
@@ -275,7 +288,7 @@ watch([month, includeIdle], load)
               netto · {{ currency(block.gross_amount) }} brutto ·
               {{ formatDuration(block.billable_seconds) }} abrechenbar
             </small>
-            <button class="report-block-print no-print" @click="printBlock(block.customer_id)">
+            <button class="report-block-print no-print" @click="printBlock(blockKey(block))">
               <Printer :size="13" />
               Nur diesen Kunden drucken
             </button>
@@ -365,7 +378,12 @@ watch([month, includeIdle], load)
             <tbody>
               <tr v-for="entry in block.entries" :key="entry.date + entry.activity + entry.duration_seconds">
                 <td class="nowrap">{{ stamp(entry.date) }}</td>
-                <td>{{ entry.activity }}</td>
+                <td>
+                  {{ entry.activity }}
+                  <span v-if="block.members.length > 1 && entry.member" class="report-included">
+                    {{ entry.member }}
+                  </span>
+                </td>
                 <td class="report-comment">{{ entry.comment || '–' }}</td>
                 <td>{{ entry.context ?? '–' }}</td>
                 <td class="num nowrap">{{ formatDuration(entry.duration_seconds) }}</td>

@@ -5129,3 +5129,74 @@ a.demo-card.demo-card--live:hover {
     display: table-header-group;
   }
 }
+
+/* Abrechnungskonto am Kunden und in den Einstellungen */
+
+.account-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 12.8px;
+  color: var(--muted);
+}
+
+.account-picker select {
+  min-width: 200px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink, #1d2939);
+  font-size: 12.8px;
+}
+
+.account-picker select:disabled {
+  opacity: 0.6;
+}
+
+.account-tag {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #f0fdfa;
+  color: var(--primary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.account-create {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin: 14px 0 18px;
+}
+
+.account-create .field {
+  min-width: 130px;
+}
+
+.account-create .field--grow {
+  flex: 1;
+  min-width: 220px;
+}
+
+.accounts-table .inline-input {
+  width: 110px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.accounts-table .inline-input--wide {
+  width: 100%;
+  min-width: 180px;
+}
+
+.accounts-table .row-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}

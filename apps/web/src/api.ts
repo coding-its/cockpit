@@ -17,6 +17,7 @@ import type {
   WebClientSummary,
   CreateTicketPayload,
   CreateTicketResponse,
+  Customer,
   CustomerDetail,
   CustomerSummary,
   Dashboard,
@@ -31,6 +32,7 @@ import type {
   MonthlyReport,
   RunDetail,
   RunListItem,
+  Account,
   Site,
   SiteAgentStatus,
   Statement,
@@ -333,6 +335,36 @@ export const api = {
     request<Statement>(`/customers/${customerId}/statement`),
   markStatementBilled: (customerId: string, entryIds: string[]) =>
     request<{ marked: number }>(`/customers/${customerId}/statement/billed`, {
+      method: 'POST',
+      body: JSON.stringify({ entry_ids: entryIds }),
+    }),
+  accounts: () => request<Account[]>('/accounts'),
+  createAccount: (payload: { code: string; name: string }) =>
+    request<Account>('/accounts', { method: 'POST', body: JSON.stringify(payload) }),
+  updateAccount: (
+    id: string,
+    payload: { code?: string; name?: string; active?: boolean },
+  ) =>
+    request<Account>(`/accounts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteAccount: (id: string) =>
+    request<void>(`/accounts/${id}`, { method: 'DELETE' }),
+  setCustomerAccount: (customerId: string, accountId: string | null) =>
+    request<Customer>(`/customers/${customerId}/account`, {
+      method: 'PATCH',
+      body: JSON.stringify({ account_id: accountId }),
+    }),
+  setWebClientAccount: (webClientId: string, accountId: string | null) =>
+    request<WebClient>(`/web-clients/${webClientId}/account`, {
+      method: 'PATCH',
+      body: JSON.stringify({ account_id: accountId }),
+    }),
+  accountStatement: (accountId: string) =>
+    request<Statement>(`/accounts/${accountId}/statement`),
+  markAccountStatementBilled: (accountId: string, entryIds: string[]) =>
+    request<{ marked: number }>(`/accounts/${accountId}/statement/billed`, {
       method: 'POST',
       body: JSON.stringify({ entry_ids: entryIds }),
     }),

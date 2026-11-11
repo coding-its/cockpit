@@ -24,6 +24,8 @@ export interface Customer {
   id: string
   name: string
   short_code: string
+  account_id: string | null
+  account_code: string | null
   ninja_org_id: number | null
   contact_name: string | null
   contact_email: string | null
@@ -230,8 +232,21 @@ export interface Statement {
   generated_by: string
   first_date: string | null
   last_date: string | null
+  /** Konto, über das die Aufstellung läuft. */
+  account_id: string | null
+  account_code: string | null
+  /** Datensätze, aus denen die Zeiten stammen. */
+  members: StatementMember[]
+  /** Mehr als ein Vertrag im Konto – sollte nicht vorkommen. */
+  contract_conflict: boolean
   entries: StatementEntry[]
   totals: StatementTotals
+}
+
+export interface StatementMember {
+  kind: 'customer' | 'web'
+  id: string
+  name: string
 }
 
 export interface StatementEntry {
@@ -241,6 +256,8 @@ export interface StatementEntry {
   comment: string | null
   context: string | null
   user_name: string
+  /** Aus welchem Datensatz die Zeit stammt (bei zusammengefassten Konten). */
+  member: string | null
   duration_seconds: number
   billable: boolean
   amount: number
@@ -348,6 +365,8 @@ export interface BillingCustomer {
   customer_id: string
   customer_name: string
   short_code: string
+  account_id: string | null
+  account_code: string | null
   billable_seconds: number
   non_billable_seconds: number
   billable_hours: number
@@ -475,6 +494,8 @@ export interface WebClient {
   notes: string | null
   hourly_rate: number
   active: boolean
+  account_id: string | null
+  account_code: string | null
 }
 
 export interface WebClientSummary {
@@ -651,6 +672,7 @@ export interface ReportEntry {
   source: string
   context: string | null
   amount: number
+  member: string | null
 }
 
 export interface ReportBlock {
@@ -679,6 +701,11 @@ export interface ReportBlock {
   sites: ReportSite[]
   runs: ReportRun[]
   entries: ReportEntry[]
+  account_id: string | null
+  account_code: string | null
+  /** Namen der Datensätze, die zu diesem Block gehören. */
+  members: string[]
+  contract_conflict: boolean
 }
 
 export interface MonthlyReport {
@@ -705,4 +732,14 @@ export interface MonitoringSummary {
 export interface BillingSettings {
   default_hourly_rate: number
   vat_rate: number
+}
+
+/** Abrechnungskonto: fasst mehrere Datensätze zu einer Rechnung zusammen. */
+export interface Account {
+  id: string
+  code: string
+  name: string
+  active: boolean
+  customer_count: number
+  web_client_count: number
 }

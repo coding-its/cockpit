@@ -29,13 +29,15 @@ const error = ref('')
 const marking = ref(false)
 const markedMessage = ref('')
 
-/** Web-Kunden und NinjaOne-Kunden teilen sich die Ansicht, nur der Aufruf unterscheidet sich. */
+/** Konto, Web-Kunde und NinjaOne-Kunde teilen sich die Ansicht. */
+const isAccount = computed(() => route.name === 'account-statement')
 const isWeb = computed(() => route.name === 'web-statement')
 const ownerId = computed(() => String(route.params.id))
 
-const backTo = computed(() =>
-  isWeb.value ? `/websites/${ownerId.value}` : `/kunden/${ownerId.value}`,
-)
+const backTo = computed(() => {
+  if (isAccount.value) return '/bericht'
+  return isWeb.value ? `/websites/${ownerId.value}` : `/kunden/${ownerId.value}`
+})
 
 const billable = computed(() => statement.value?.entries.filter((entry) => entry.billable) ?? [])
 const nonBillable = computed(
@@ -57,9 +59,11 @@ async function load() {
   error.value = ''
   markedMessage.value = ''
   try {
-    statement.value = isWeb.value
-      ? await api.webStatement(ownerId.value)
-      : await api.statement(ownerId.value)
+    statement.value = isAccount.value
+      ? await api.accountStatement(ownerId.value)
+      : isWeb.value
+        ? await api.webStatement(ownerId.value)
+        : await api.statement(ownerId.value)
   } catch (caught) {
     error.value = errorMessage(caught)
   } finally {
@@ -92,9 +96,11 @@ async function markBilled() {
   error.value = ''
   try {
     const ids = value.entries.map((entry) => entry.id)
-    const result = isWeb.value
-      ? await api.markWebStatementBilled(ownerId.value, ids)
-      : await api.markStatementBilled(ownerId.value, ids)
+    const result = isAccount.value
+      ? await api.markAccountStatementBilled(ownerId.value, ids)
+      : isWeb.value
+        ? await api.markWebStatementBilled(ownerId.value, ids)
+        : await api.markStatementBilled(ownerId.value, ids)
 
     // Erst neu laden, dann melden: `load` setzt die Meldung zurück, sonst
     // wäre sie nach dem Aktualisieren der Liste sofort wieder weg.
@@ -109,7 +115,7 @@ async function markBilled() {
   }
 }
 
-watch([isWeb, ownerId], load)
+watch([isWeb, isAccount, ownerId], load)
 onMounted(load)
 </script>
 
@@ -173,8 +179,16 @@ onMounted(load)
           {{ statement.name }}
           <span class="report-code">{{ statement.short_code }}</span>
         </h2>
+        <p v-if="statement.account_code" class="statement-contract">
+          Abrechnungskonto {{ statement.account_code }} ·
+          {{ statement.members.map((member) => member.name).join(' · ') }}
+        </p>
         <p v-if="statement.contract_name" class="statement-contract">
           Vertrag: {{ statement.contract_name }}
+        </p>
+        <p v-if="statement.contract_conflict" class="report-note report-note--warn">
+          In diesem Konto sind mehrere Verträge hinterlegt. Berechnet wurde der erste.
+          Bitte die Zuordnung prüfen.
         </p>
       </section>
 
@@ -194,7 +208,12 @@ onMounted(load)
           <tbody>
             <tr v-for="entry in billable" :key="entry.id">
               <td class="nowrap">{{ formatDate(entry.date) }}</td>
-              <td>{{ entry.activity }}</td>
+              <td>
+                {{ entry.activity }}
+                <span v-if="statement.members.length > 1 && entry.member" class="report-included">
+                  {{ entry.member }}
+                </span>
+              </td>
               <td class="report-comment">{{ entry.comment || '–' }}</td>
               <td>{{ entry.context ?? '–' }}</td>
               <td>{{ entry.user_name }}</td>

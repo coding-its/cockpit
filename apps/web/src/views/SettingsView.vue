@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Calculator, Database, RefreshCw, Save, Server, UserCog } from 'lucide-vue-next'
+import { Building2, Calculator, Database, RefreshCw, Save, Server, UserCog } from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
 import { currency } from '../format'
 import type { BillingSettings } from '../types'
 import UsersView from './UsersView.vue'
+import AccountSettings from '../components/AccountSettings.vue'
 import DatabaseSettings from '../components/DatabaseSettings.vue'
 import EnvSettings from '../components/EnvSettings.vue'
 import { useAppStore } from '../stores/app'
@@ -14,18 +15,21 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 
-type Tab = 'benutzer' | 'abrechnung' | 'datenbank' | 'ninjaone'
+type Tab = 'benutzer' | 'abrechnung' | 'konten' | 'datenbank' | 'ninjaone'
 
 const tabs: Array<{ key: Tab; label: string; icon: typeof UserCog }> = [
   { key: 'benutzer', label: 'Benutzer', icon: UserCog },
   { key: 'abrechnung', label: 'Stundensätze', icon: Calculator },
+  { key: 'konten', label: 'Konten', icon: Building2 },
   { key: 'datenbank', label: 'Datenbank', icon: Database },
   { key: 'ninjaone', label: 'NinjaOne', icon: Server },
 ]
 
 const activeTab = computed<Tab>(() => {
   const tab = route.query.tab
-  if (tab === 'abrechnung' || tab === 'datenbank' || tab === 'ninjaone') return tab
+  if (tab === 'abrechnung' || tab === 'konten' || tab === 'datenbank' || tab === 'ninjaone') {
+    return tab
+  }
   return 'benutzer'
 })
 
@@ -117,6 +121,7 @@ onMounted(loadBilling)
     </nav>
 
     <UsersView v-if="activeTab === 'benutzer'" />
+    <AccountSettings v-else-if="activeTab === 'konten'" />
 
     <DatabaseSettings v-else-if="activeTab === 'datenbank'" />
 

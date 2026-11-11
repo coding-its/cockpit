@@ -64,6 +64,12 @@ const router = createRouter({
       meta: { title: 'Web-Kunde' },
     },
     {
+      path: '/konten/:id/abrechnung',
+      name: 'account-statement',
+      component: () => import('./views/StatementView.vue'),
+      meta: { title: 'Abrechnung' },
+    },
+    {
       path: '/websites/:id/abrechnung',
       name: 'web-statement',
       component: () => import('./views/StatementView.vue'),

@@ -72,6 +72,13 @@ pub struct ReportBlock {
     pub sites: Vec<ReportSite>,
     pub runs: Vec<ReportRun>,
     pub entries: Vec<ReportEntry>,
+    /// Abrechnungskonto, über das dieser Block abgerechnet wird.
+    pub account_id: Option<String>,
+    pub account_code: Option<String>,
+    /// Namen der Datensätze, aus denen der Block besteht (bei Konten > 1).
+    pub members: Vec<String>,
+    /// Mehr als ein Vertrag im Konto – sollte nicht vorkommen.
+    pub contract_conflict: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -122,6 +129,8 @@ pub struct ReportEntry {
     pub source: String,
     pub context: Option<String>,
     pub amount: f64,
+    /// Aus welchem Datensatz die Zeit stammt (nur bei zusammengefassten Konten).
+    pub member: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -137,6 +146,8 @@ struct CustomerRow {
     flat_fee: f64,
     billable_seconds: i64,
     non_billable_seconds: i64,
+    account_id: Option<String>,
+    account_code: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -150,6 +161,8 @@ struct WebRow {
     billable_seconds: i64,
     non_billable_seconds: i64,
     site_count: i64,
+    account_id: Option<String>,
+    account_code: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -266,6 +279,7 @@ pub async fn monthly(
             CAST(COALESCE(ct.included_hours, 0) AS DOUBLE PRECISION) AS included_hours,
             CAST(COALESCE(ct.hourly_rate, 0) AS DOUBLE PRECISION) AS hourly_rate,
             CAST(COALESCE(ct.flat_fee, 0) AS DOUBLE PRECISION) AS flat_fee,
+            c.account_id, a.code AS account_code,
             COALESCE((
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.customer_id = c.id AND te.billable = true
@@ -280,6 +294,7 @@ pub async fn monthly(
         LEFT JOIN contracts ct ON ct.id = (
             SELECT id FROM contracts WHERE customer_id = c.id AND active = true LIMIT 1
         )
+        LEFT JOIN accounts a ON a.id = c.account_id
         WHERE c.active = true
         ORDER BY c.name
         "#,
@@ -293,6 +308,7 @@ pub async fn monthly(
         SELECT
             w.id, w.name, w.short_code, w.contact_name, w.contact_email,
             CAST(w.hourly_rate AS DOUBLE PRECISION) AS hourly_rate,
+            w.account_id, wa.code AS account_code,
             COALESCE((
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.web_client_id = w.id AND te.billable = true
@@ -305,6 +321,7 @@ pub async fn monthly(
             ), 0)::bigint AS non_billable_seconds,
             (SELECT COUNT(*) FROM sites s WHERE s.web_client_id = w.id) AS site_count
         FROM web_clients w
+        LEFT JOIN accounts wa ON wa.id = w.account_id
         WHERE w.active = true
         ORDER BY w.name
         "#,
@@ -352,6 +369,8 @@ pub async fn monthly(
         let net = round2(customer.flat_fee + time_amount);
         let (vat_amount, gross_amount) = with_vat(net, billing.vat_rate);
 
+        let member_name = customer.name.clone();
+
         blocks.push(ReportBlock {
             kind: "ninjaone".to_string(),
             customer_id: customer.id,
@@ -374,9 +393,13 @@ pub async fn monthly(
             total_amount: net,
             vat_amount,
             gross_amount,
+            members: vec![member_name.clone()],
+            account_id: customer.account_id.clone(),
+            account_code: customer.account_code.clone(),
+            contract_conflict: false,
             sites: Vec::new(),
             runs,
-            entries,
+            entries: with_member(entries, &member_name),
         });
     }
 
@@ -410,6 +433,8 @@ pub async fn monthly(
         );
         let (vat_amount, gross_amount) = with_vat(time_amount, billing.vat_rate);
 
+        let member_name = client.name.clone();
+
         blocks.push(ReportBlock {
             kind: "web".to_string(),
             customer_id: client.id,
@@ -440,11 +465,17 @@ pub async fn monthly(
             total_amount: time_amount,
             vat_amount,
             gross_amount,
+            members: vec![member_name.clone()],
+            account_id: client.account_id.clone(),
+            account_code: client.account_code.clone(),
+            contract_conflict: false,
             sites,
             runs: Vec::new(),
-            entries,
+            entries: with_member(entries, &member_name),
         });
     }
+
+    let blocks = merge_accounts(blocks, billing.vat_rate);
 
     let mut totals = ReportTotals {
         customers: blocks.len(),
@@ -479,6 +510,183 @@ pub async fn monthly(
         blocks,
         totals,
     })
+}
+
+
+/// Trägt den Namen des Datensatzes an jeder Zeile ein. Bei einem Konto mit
+/// mehreren Quellen ist sonst nicht erkennbar, woher eine Zeit stammt.
+fn with_member(mut entries: Vec<ReportEntry>, member: &str) -> Vec<ReportEntry> {
+    for entry in &mut entries {
+        entry.member = Some(member.to_string());
+    }
+    entries
+}
+
+/// Fasst Blöcke zusammen, die auf dasselbe Abrechnungskonto zeigen.
+///
+/// Ohne Konto bleibt jeder Block für sich – die Beträge ändern sich dadurch
+/// nicht. Mit Konto entsteht **eine** Zeile pro Firma, in der die Zeiten,
+/// Wartungsläufe und Website-Aktionen aller Datensätze zusammenlaufen.
+///
+/// Der Vertrag kommt aus dem Mitglied, das einen hat. Gibt es mehrere, wird
+/// der erste genommen und `contract_conflict` gesetzt – die Oberfläche kann
+/// dann warnen, statt still zu addieren.
+fn merge_accounts(blocks: Vec<ReportBlock>, vat_rate: f64) -> Vec<ReportBlock> {
+    use std::collections::BTreeMap;
+
+    let mut groups: BTreeMap<String, Vec<ReportBlock>> = BTreeMap::new();
+
+    for block in blocks {
+        // Schlüssel: Konto, sonst der Block selbst.
+        let key = match block.account_id.clone() {
+            Some(account_id) => format!("account:{account_id}"),
+            None => format!("source:{}:{}", block.kind, block.customer_id),
+        };
+        groups.entry(key).or_default().push(block);
+    }
+
+    let mut merged = Vec::with_capacity(groups.len());
+
+    for (_, mut group) in groups {
+        if group.len() == 1 {
+            let block = group.remove(0);
+            merged.push(block);
+            continue;
+        }
+
+        // Der Datensatz mit Vertrag führt den Block an (Name, Kontakt,
+        // Satz); die übrigen liefern Zeiten und Läufe.
+        group.sort_by(|a, b| {
+            let a_contract = a.included_hours > 0.0 || a.flat_fee > 0.0 || a.rate_source == "contract";
+            let b_contract = b.included_hours > 0.0 || b.flat_fee > 0.0 || b.rate_source == "contract";
+            b_contract.cmp(&a_contract)
+        });
+
+        let contracts = group
+            .iter()
+            .filter(|b| b.included_hours > 0.0 || b.flat_fee > 0.0 || b.rate_source == "contract")
+            .count();
+
+        let lead = &group[0];
+        let included_hours = lead.included_hours;
+        // Eine Rechnung, ein Satz: Der Vertragssatz der Firma gilt für alle
+        // Zeiten des Kontos – auch für die, die an einem Datensatz ohne
+        // eigenen Satz erfasst wurden. Sonst stünden zwei Sätze auf einem
+        // Blatt, und die Summe ließe sich nicht mehr erklären.
+        let hourly_rate = lead.hourly_rate;
+        let flat_fee = group.iter().map(|b| b.flat_fee).sum::<f64>();
+        let billable_seconds = group.iter().map(|b| b.billable_seconds).sum();
+        let non_billable_seconds = group.iter().map(|b| b.non_billable_seconds).sum();
+        let (vat_amount, gross_amount);
+
+        let mut members: Vec<String> = Vec::new();
+        let mut entries: Vec<ReportEntry> = Vec::new();
+        let mut runs: Vec<ReportRun> = Vec::new();
+        let mut sites: Vec<ReportSite> = Vec::new();
+
+        for block in &group {
+            if !members.contains(&block.customer_name) {
+                members.push(block.customer_name.clone());
+            }
+            entries.extend(block.entries.iter().map(|entry| {
+                let amount = if entry.billable {
+                    seconds_to_amount(entry.duration_seconds, hourly_rate)
+                } else {
+                    0.0
+                };
+                ReportEntry {
+                    date: entry.date.clone(),
+                    activity: entry.activity.clone(),
+                    comment: entry.comment.clone(),
+                    duration_seconds: entry.duration_seconds,
+                    billable: entry.billable,
+                    source: entry.source.clone(),
+                    context: entry.context.clone(),
+                    amount,
+                    member: entry.member.clone(),
+                }
+            }));
+            runs.extend(block.runs.iter().map(|run| ReportRun {
+                title: run.title.clone(),
+                taken_at: run.taken_at.clone(),
+                status: run.status.clone(),
+                assignee: run.assignee.clone(),
+                tasks: run.tasks.iter().map(|task| ReportTask {
+                    title: task.title.clone(),
+                    target: task.target.clone(),
+                    status: task.status.clone(),
+                    result: task.result.clone(),
+                }).collect(),
+            }));
+            sites.extend(block.sites.iter().map(|site| ReportSite {
+                label: site.label.clone(),
+                url: site.url.clone(),
+                wp_version: site.wp_version.clone(),
+                plugin_updates: site.plugin_updates,
+                core_update: site.core_update,
+                actions: site.actions.iter().map(|action| ReportAction {
+                    kind: action.kind.clone(),
+                    label: action.label.clone(),
+                    taken_at: action.taken_at.clone(),
+                    status: action.status.clone(),
+                    message: action.message.clone(),
+                    before_version: action.before_version.clone(),
+                    after_version: action.after_version.clone(),
+                }).collect(),
+            }));
+        }
+
+        entries.sort_by(|a, b| a.date.cmp(&b.date));
+
+        // Summe = Addition der gedruckten Zeilen, abzüglich des Werts des
+        // Inklusivvolumens. Steuer auf den Nettobetrag.
+        let lines_total: f64 = entries
+            .iter()
+            .filter(|entry| entry.billable)
+            .map(|entry| entry.amount)
+            .sum();
+        let included_value = round2(included_hours * hourly_rate);
+        let time_amount = round2((lines_total - included_value).max(0.0));
+        let total_amount = round2(time_amount + flat_fee);
+        let vat = with_vat(total_amount, vat_rate);
+        vat_amount = vat.0;
+        gross_amount = vat.1;
+        runs.sort_by(|a, b| a.taken_at.cmp(&b.taken_at));
+        sites.sort_by(|a, b| a.label.cmp(&b.label));
+
+        merged.push(ReportBlock {
+            kind: lead.kind.clone(),
+            customer_id: lead.customer_id.clone(),
+            customer_name: lead.customer_name.clone(),
+            short_code: lead.account_code.clone().unwrap_or_else(|| lead.short_code.clone()),
+            contact_name: lead.contact_name.clone(),
+            contact_email: lead.contact_email.clone(),
+            contract_name: lead.contract_name.clone(),
+            included_hours,
+            hourly_rate,
+            rate_source: lead.rate_source.clone(),
+            flat_fee: round2(flat_fee),
+            billable_seconds,
+            non_billable_seconds,
+            overage_seconds: overage_seconds(billable_seconds, included_hours),
+            billable_hours: seconds_to_hours(billable_seconds),
+            non_billable_hours: seconds_to_hours(non_billable_seconds),
+            overage_hours: seconds_to_hours(overage_seconds(billable_seconds, included_hours)),
+            time_amount,
+            total_amount,
+            vat_amount,
+            gross_amount,
+            sites,
+            runs,
+            entries,
+            account_id: lead.account_id.clone(),
+            account_code: lead.account_code.clone(),
+            members,
+            contract_conflict: contracts > 1,
+        });
+    }
+
+    merged
 }
 
 async fn load_runs(
@@ -641,6 +849,7 @@ async fn load_entries(
                 source: row.source,
                 context: row.device_label.or(row.site_label),
                 amount,
+                member: None,
             }
         })
         .collect())
@@ -782,6 +991,65 @@ mod tests {
             "die Gesamtsumme ist die Addition der Kundensummen"
         );
         assert_eq!(report.totals.billable_seconds, 43 + 2700);
+    }
+
+
+    #[tokio::test]
+    async fn one_account_produces_one_block() {
+        let (_guard, pool) = testdb::fixture().await;
+        let account = crate::accounts::create(&pool, "MWK", "Musterwerk GmbH")
+            .await
+            .unwrap()
+            .unwrap();
+
+        customer_with(&pool, "c1", 0.0, 100.0).await;
+        sqlx::query(
+            "INSERT INTO web_clients (id, name, short_code, active, created_at)
+             VALUES ('w1', 'Musterwerk Web', 'AHSW', true, $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("UPDATE customers SET account_id = $1 WHERE id = 'c1'")
+            .bind(&account.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE web_clients SET account_id = $1 WHERE id = 'w1'")
+            .bind(&account.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        entry(&pool, "e1", "c1", 3600).await;
+        sqlx::query(
+            "INSERT INTO time_entries
+                (id, web_client_id, user_name, activity, started_at, ended_at,
+                 duration_seconds, billable, source, created_at)
+             VALUES ('e2', 'w1', 'S. Wolf', 'Webseite', '2026-11-03T10:00:00',
+                     '2026-11-03T11:00:00', 1800, true, 'timer', $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let report = monthly(&pool, "2026-11", false, &BillingSettings::default())
+            .await
+            .unwrap();
+
+        assert_eq!(report.blocks.len(), 1, "eine Firma, ein Block");
+        let block = &report.blocks[0];
+        assert_eq!(block.account_code.as_deref(), Some("MWK"));
+        assert_eq!(block.billable_seconds, 5400);
+        assert_eq!(block.entries.len(), 2);
+        assert_eq!(block.members.len(), 2, "beide Quellen sind benannt");
+        assert_eq!(block.time_amount, 150.0);
+        // Die Zeilenbeträge ergeben weiterhin die Kundensumme.
+        let sum: f64 = block.entries.iter().map(|e| e.amount).sum();
+        assert_eq!((sum * 100.0).round() / 100.0, block.time_amount);
     }
 
     #[tokio::test]

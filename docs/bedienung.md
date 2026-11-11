@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.7_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.8_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -509,7 +509,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.7_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.8_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -583,6 +583,36 @@ einer Seite.
 deines Chefs mit einem eigenen Konto arbeiten, ohne irgendetwas ändern zu können.
 
 Jede Erzeugung landet als **„Monatsbericht erzeugt"** im Audit-Trail, mit Benutzer und Monat.
+
+## Abrechnungskonten (eine Firma, eine Rechnung)
+
+Dieselbe Firma kann im Cockpit mehrfach vorkommen: als NinjaOne-Kunde, als Web-Kunde und
+später als TeamViewer-Kunde – mit unterschiedlichen Namen – etwa abgekürzt in der einen und ausgeschrieben in der anderen Quelle.
+Ein **Abrechnungskonto** fasst solche Datensätze zu **einer** Position zusammen.
+
+**Anlegen:** *Einstellungen → Konten*. Kürzel (z. B. `MWK`) und Name eintragen, **Konto
+anlegen**. Das Kürzel ist eindeutig; „mwk" und „MWK" gelten als dasselbe.
+
+**Zuordnen:** In der Kundenansicht steht unter den Kontaktdaten **Abrechnungskonto** mit einer
+Auswahlliste. Dasselbe gibt es beim Web-Kunden. „– keins –" löst die Zuordnung wieder.
+
+**Was sich ändert:** Alle Kunden mit demselben Konto erscheinen in Monatsbericht,
+Abrechnungsübersicht und Aufstellung als eine Zeile mit einer Summe. Im Bericht nennt der
+Block, aus welchen Datensätzen er besteht, und jede Zeitzeile zeigt ihre Herkunft.
+
+**Was gleich bleibt:** Ohne Konto rechnet jeder Kunde wie bisher für sich. Bestehende Beträge
+ändern sich durch das Anlegen eines Kontos nicht – erst die Zuordnung ändert etwas.
+
+**Eine Rechnung, ein Satz:** Gilt im Konto ein Vertrag mit Stundensatz, werden **alle** Zeiten
+des Kontos mit diesem Satz gerechnet – auch die eines Web-Kunden ohne eigenen Satz. Sonst
+stünden zwei Sätze auf einem Blatt und die Summe ließe sich nicht mehr erklären. Inklusivstunden
+gelten einmal für die Firma, nicht je Datensatz.
+
+**Mehrere Verträge** in einem Konto sollten nicht vorkommen. Passiert es doch, rechnet das
+Cockpit mit dem ersten und **weist im Dokument darauf hin**, statt still zu addieren.
+
+**Löschen** geht nur, solange dem Konto kein Datensatz zugeordnet ist. Sonst würde eine
+Rechnung sich ändern, ohne dass es jemand merkt.
 
 ## Wie abgerechnet wird
 

@@ -6,6 +6,7 @@
 //! Beide Wege benutzen also dieselben Routen, dieselbe Rechteprüfung und
 //! denselben Audit-Trail.
 
+mod accounts;
 mod auth;
 mod billing;
 mod config;

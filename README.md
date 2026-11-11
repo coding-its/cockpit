@@ -18,7 +18,7 @@ npm run installer:desktop  # MSI erzeugen
 ```
 
 Ergebnis: `apps/desktop/src-tauri/target/release/wartungscockpit.exe` (14 MB) und
-`…/bundle/msi/Wartungscockpit_0.1.7_x64_de-DE.msi` (5,5 MB).
+`…/bundle/msi/Wartungscockpit_0.1.8_x64_de-DE.msi` (5,5 MB).
 
 **Nach der Installation** sucht die App ihre Einstellungen in dieser Reihenfolge:
 `%DB_CONFIG%`, `data\db.json` im Arbeitsverzeichnis, `data\db.json` in den Elternordnern der
@@ -86,6 +86,7 @@ Die Datenbank muss vorher angelegt sein; die Tabellen legt der Test selbst an un
 - **PostgreSQL statt SQLite**: mehrere Personen gleichzeitig, Verbindungsdaten in der Oberfläche änderbar (Einstellungen → Datenbank), mit Verbindungstest
 - **Monatsbericht** als druckbares Dokument (PDF über den Browser): Zusammenfassung je Kunde mit Überhang, Satz, Pauschale, netto und brutto, darunter je Kunde die Wartungsläufe, Website-Aktionen und Zeiten mit Kommentar – gesamt oder **pro Kunde druckbar**
 - **Aufstellung offener Zeiten je Kunde**: alle noch nicht abgerechneten Zeiten – auch über einen Monatswechsel – als druckbares Dokument mit Summe, USt und Brutto, danach **als abgerechnet markieren**; markierte Einträge erscheinen in der Zeitenliste als „abgerechnet"
+- **Abrechnungskonten**: mehrere Datensätze (NinjaOne, Web, später TeamViewer) unter einem Kürzel zu einer Rechnung zusammenfassen – ein Vertrag, ein Satz, eine Summe; ohne Konto bleibt alles wie bisher
 - **Abrechnung sekundengenau**: Betrag je Position = Dauer × Stundensatz, auf Cent gerundet, Summe = Addition der Positionen – keine Mindestzeiten, keine Aufrundung; Zeitenliste, Aufstellung, Monatsbericht und CSV rechnen mit derselben Funktion
 - **Standard-Stundensatz** 126,05 € netto (150 € brutto), wenn im Vertrag keiner gepflegt ist; im Bericht als „Standard" gekennzeichnet
 - **tix-Verlinkung** aus Einsätzen und Integrationen (das System hat keine API)

@@ -34,7 +34,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
-import type { BillingSummary, CustomerDetail, DevicePatch } from '../types'
+import type { Account, BillingSummary, CustomerDetail, DevicePatch } from '../types'
 import {
   currency,
   currentMonth,
@@ -59,6 +59,9 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 const detail = ref<CustomerDetail | null>(null)
+const accounts = ref<Account[]>([])
+const accountBusy = ref(false)
+const accountError = ref('')
 const billing = ref<BillingSummary | null>(null)
 const loading = ref(true)
 const error = ref('')
@@ -397,11 +400,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [customer, billingSummary, integration] = await Promise.all([
+    const [customer, billingSummary, integration, accountList] = await Promise.all([
       api.customer(customerId.value),
       api.billing(month),
       api.integrations().catch(() => null),
+      api.accounts().catch(() => [] as Account[]),
     ])
+    accounts.value = accountList
     detail.value = customer
     billing.value = billingSummary
     if (integration?.ninjaone_base_url) {
@@ -540,6 +545,22 @@ function pollInlineAction(jobId: string, taskId: string) {
   }, 900)
 }
 
+/// Ordnet den Kunden einem Abrechnungskonto zu (oder löst die Zuordnung).
+/// Danach neu laden, damit Beträge und Kontoanzeige sofort stimmen.
+async function changeAccount(value: string) {
+  const accountId = value || null
+  accountBusy.value = true
+  accountError.value = ''
+  try {
+    await api.setCustomerAccount(customerId.value, accountId)
+    await load()
+  } catch (caught) {
+    accountError.value = errorMessage(caught)
+  } finally {
+    accountBusy.value = false
+  }
+}
+
 function focusTimer() {
   timerSection.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   timerSection.value?.querySelector('input')?.focus()
@@ -603,6 +624,26 @@ onUnmounted(() => {
               <span><Phone :size="14" /> {{ detail.customer.phone ?? '–' }}</span>
               <span><Server :size="14" /> NinjaOne #{{ detail.customer.ninja_org_id ?? '–' }}</span>
             </div>
+            <label class="account-picker">
+              <Building2 :size="14" />
+              <span>Abrechnungskonto</span>
+              <select
+                :value="detail.customer.account_id ?? ''"
+                :disabled="accountBusy"
+                @change="changeAccount(($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">– keins (eigene Rechnung) –</option>
+                <option v-for="account in accounts" :key="account.id" :value="account.id">
+                  {{ account.code }} · {{ account.name }}
+                </option>
+              </select>
+              <span v-if="detail.customer.account_code" class="account-tag">
+                Rechnung über {{ detail.customer.account_code }}
+              </span>
+            </label>
+            <p v-if="accountError" class="settings-message settings-message--error">
+              {{ accountError }}
+            </p>
           </div>
         </div>
         <div class="customer-badges">

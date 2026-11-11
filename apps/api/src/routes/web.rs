@@ -30,6 +30,10 @@ pub fn router(_state: SharedState) -> Router<SharedState> {
         )
         .route("/api/v1/web-clients/{id}/sites", post(create_site))
         .route(
+            "/api/v1/web-clients/{id}/account",
+            patch(set_client_account),
+        )
+        .route(
             "/api/v1/web-clients/{id}/statement",
             get(web_statement),
         )
@@ -154,6 +158,44 @@ pub async fn create_client(
     .await?;
 
     Ok(Json(fetch_client(&state.pool, &id).await?))
+}
+
+/// Ordnet einen Web-Kunden einem Abrechnungskonto zu.
+pub async fn set_client_account(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(payload): Json<AccountAssignment>,
+) -> ApiResult<Json<WebClient>> {
+    // Existiert der Web-Kunde? (liefert 404 mit lesbarer Meldung)
+    fetch_client(&state.pool, &id).await?;
+
+    if let Some(account_id) = payload.account_id.as_deref() {
+        if crate::accounts::get(&state.pool, account_id).await?.is_none() {
+            return Err(ApiError::NotFound(format!(
+                "Konto {account_id} nicht gefunden"
+            )));
+        }
+    }
+
+    crate::accounts::assign_web_client(&state.pool, &id, payload.account_id.as_deref()).await?;
+
+    let detail = match payload.account_id.as_deref() {
+        Some(account_id) => format!("Konto {account_id}"),
+        None => "Zuordnung gelöst".to_string(),
+    };
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "Web-Kunde einem Abrechnungskonto zugeordnet",
+        Some("web_client"),
+        Some(&id),
+        &detail,
+    )
+    .await?;
+
+    fetch_client(&state.pool, &id).await.map(Json)
 }
 
 /// Aufstellung der noch nicht abgerechneten Zeiten eines Web-Kunden.
@@ -1385,11 +1427,15 @@ async fn progress(
 }
 
 async fn fetch_client(pool: &PgPool, id: &str) -> ApiResult<WebClient> {
-    sqlx::query_as::<_, WebClient>("SELECT * FROM web_clients WHERE id = $1")
-        .bind(id)
-        .fetch_optional(pool)
-        .await?
-        .ok_or_else(|| ApiError::NotFound(format!("Web-Kunde {id} nicht gefunden")))
+    sqlx::query_as::<_, WebClient>(
+        "SELECT w.*, a.code AS account_code
+         FROM web_clients w LEFT JOIN accounts a ON a.id = w.account_id
+         WHERE w.id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| ApiError::NotFound(format!("Web-Kunde {id} nicht gefunden")))
 }
 
 /// Ergänzt fehlendes Schema und normalisiert die Adresse.

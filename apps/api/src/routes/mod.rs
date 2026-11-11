@@ -26,6 +26,22 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/v1/customers", get(list_customers))
         .route("/api/v1/customers/{id}", get(get_customer))
         .route("/api/v1/customers/{id}/focus", axum::routing::patch(set_customer_focus))
+        .route("/api/v1/customers/{id}/account", axum::routing::patch(set_customer_account))
+        .route("/api/v1/accounts", get(list_accounts).post(create_account))
+        .route(
+            "/api/v1/accounts/{id}",
+            get(get_account)
+                .patch(update_account)
+                .delete(delete_account),
+        )
+        .route(
+            "/api/v1/accounts/{id}/statement",
+            get(account_statement),
+        )
+        .route(
+            "/api/v1/accounts/{id}/statement/billed",
+            post(mark_account_statement),
+        )
         .route("/api/v1/customers/{id}/statement", get(customer_statement))
         .route(
             "/api/v1/customers/{id}/statement/billed",
@@ -363,8 +379,10 @@ pub async fn get_customer(
     Path(id): Path<String>,
 ) -> ApiResult<Json<CustomerDetail>> {
     let customer = sqlx::query_as::<_, Customer>(
-        "SELECT id, name, short_code, ninja_org_id, contact_name, contact_email, phone, notes, active, focus
-         FROM customers WHERE id = $1",
+        "SELECT c.id, c.name, c.short_code, c.ninja_org_id, c.contact_name, c.contact_email,
+                c.phone, c.notes, c.active, c.focus, c.account_id, a.code AS account_code
+         FROM customers c LEFT JOIN accounts a ON a.id = c.account_id
+         WHERE c.id = $1",
     )
     .bind(&id)
     .fetch_optional(&state.pool)
@@ -1413,8 +1431,10 @@ pub async fn get_run(
         .ok_or_else(|| ApiError::NotFound(format!("Wartungslauf {id} nicht gefunden")))?;
 
     let customer = sqlx::query_as::<_, Customer>(
-        "SELECT id, name, short_code, ninja_org_id, contact_name, contact_email, phone, notes, active, focus
-         FROM customers WHERE id = $1",
+        "SELECT c.id, c.name, c.short_code, c.ninja_org_id, c.contact_name, c.contact_email,
+                c.phone, c.notes, c.active, c.focus, c.account_id, a.code AS account_code
+         FROM customers c LEFT JOIN accounts a ON a.id = c.account_id
+         WHERE c.id = $1",
     )
     .bind(&run.customer_id)
     .fetch_one(&state.pool)
@@ -1840,6 +1860,222 @@ pub async fn mark_customer_statement(
             user.actor(),
             "Zeiten als abgerechnet markiert",
             Some("customer"),
+            Some(&id),
+            &format!("{marked} Einträge"),
+        )
+        .await?;
+    }
+
+    Ok(Json(BilledResponse { marked }))
+}
+
+// ---------------------------------------------------------------------------
+// Abrechnungskonten
+// ---------------------------------------------------------------------------
+
+pub async fn list_accounts(
+    State(state): State<SharedState>,
+    _user: CurrentUser,
+) -> ApiResult<Json<Vec<crate::accounts::Account>>> {
+    Ok(Json(crate::accounts::list(&state.pool).await?))
+}
+
+pub async fn get_account(
+    State(state): State<SharedState>,
+    _user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<crate::accounts::Account>> {
+    crate::accounts::get(&state.pool, &id)
+        .await?
+        .map(Json)
+        .ok_or_else(|| ApiError::NotFound(format!("Konto {id} nicht gefunden")))
+}
+
+pub async fn create_account(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Json(payload): Json<crate::accounts::CreateAccountRequest>,
+) -> ApiResult<Json<crate::accounts::Account>> {
+    let code = payload.code.trim();
+    let name = payload.name.trim();
+
+    if code.is_empty() || name.is_empty() {
+        return Err(ApiError::BadRequest(
+            "Kürzel und Name des Kontos dürfen nicht leer sein.".to_string(),
+        ));
+    }
+
+    let account = crate::accounts::create(&state.pool, code, name)
+        .await?
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!("Das Kürzel „{code}“ ist bereits vergeben."))
+        })?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "Abrechnungskonto angelegt",
+        Some("account"),
+        Some(&account.id),
+        &format!("{} · {}", account.code, account.name),
+    )
+    .await?;
+
+    Ok(Json(account))
+}
+
+pub async fn update_account(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(payload): Json<crate::accounts::UpdateAccountRequest>,
+) -> ApiResult<Json<crate::accounts::Account>> {
+    let account = crate::accounts::update(
+        &state.pool,
+        &id,
+        payload.code.as_deref(),
+        payload.name.as_deref(),
+        payload.active,
+    )
+    .await?
+    .ok_or_else(|| {
+        ApiError::BadRequest("Das Kürzel ist bereits an ein anderes Konto vergeben.".to_string())
+    })?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "Abrechnungskonto geändert",
+        Some("account"),
+        Some(&account.id),
+        &format!("{} · {}", account.code, account.name),
+    )
+    .await?;
+
+    Ok(Json(account))
+}
+
+/// Löscht ein Konto nur, wenn ihm kein Datensatz mehr zugeordnet ist.
+///
+/// Sonst würde die bestehende Zuordnung stillschweigend verschwinden und die
+/// Rechnung eines Kunden sich ändern, ohne dass es jemand merkt.
+pub async fn delete_account(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let account = crate::accounts::get(&state.pool, &id)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Konto {id} nicht gefunden")))?;
+
+    if account.customer_count > 0 || account.web_client_count > 0 {
+        return Err(ApiError::BadRequest(format!(
+            "Das Konto „{}“ ist noch {} Datensätzen zugeordnet. Bitte die Zuordnung zuerst lösen.",
+            account.code,
+            account.customer_count + account.web_client_count
+        )));
+    }
+
+    sqlx::query("DELETE FROM accounts WHERE id = $1")
+        .bind(&id)
+        .execute(&state.pool)
+        .await?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "Abrechnungskonto gelöscht",
+        Some("account"),
+        Some(&id),
+        &format!("{} · {}", account.code, account.name),
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({ "deleted": true })))
+}
+
+/// Ordnet einen NinjaOne-Kunden einem Abrechnungskonto zu.
+pub async fn set_customer_account(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(payload): Json<AccountAssignment>,
+) -> ApiResult<Json<Customer>> {
+    let exists: Option<String> = sqlx::query_scalar("SELECT id FROM customers WHERE id = $1")
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await?;
+
+    if exists.is_none() {
+        return Err(ApiError::NotFound(format!("Kunde {id} nicht gefunden")));
+    }
+
+    if let Some(account_id) = payload.account_id.as_deref() {
+        if crate::accounts::get(&state.pool, account_id).await?.is_none() {
+            return Err(ApiError::NotFound(format!(
+                "Konto {account_id} nicht gefunden"
+            )));
+        }
+    }
+
+    crate::accounts::assign_customer(&state.pool, &id, payload.account_id.as_deref()).await?;
+
+    let detail = sqlx::query_as::<_, Customer>(
+        "SELECT c.id, c.name, c.short_code, c.ninja_org_id, c.contact_name, c.contact_email,
+                c.phone, c.notes, c.active, c.focus, c.account_id, a.code AS account_code
+         FROM customers c LEFT JOIN accounts a ON a.id = c.account_id
+         WHERE c.id = $1",
+    )
+    .bind(&id)
+    .fetch_one(&state.pool)
+    .await?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "Kunde einem Abrechnungskonto zugeordnet",
+        Some("customer"),
+        Some(&id),
+        detail.account_code.as_deref().unwrap_or("Zuordnung gelöst"),
+    )
+    .await?;
+
+    Ok(Json(detail))
+}
+
+/// Aufstellung aller offenen Zeiten eines Kontos.
+pub async fn account_statement(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+) -> ApiResult<Json<crate::statement::Statement>> {
+    let billing = crate::settings::billing(&state.pool).await;
+
+    let mut statement = crate::statement::for_account(&state.pool, &id, &billing)
+        .await?
+        .ok_or_else(|| ApiError::NotFound(format!("Konto {id} nicht gefunden")))?;
+
+    statement.generated_by = user.display_name.clone();
+
+    Ok(Json(statement))
+}
+
+/// Markiert die gedruckten Zeiten eines Kontos als abgerechnet.
+pub async fn mark_account_statement(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(payload): Json<BilledRequest>,
+) -> ApiResult<Json<BilledResponse>> {
+    let marked =
+        crate::statement::mark_billed_account(&state.pool, &id, &payload.entry_ids).await?;
+
+    if marked > 0 {
+        audit(
+            &state.pool,
+            user.actor(),
+            "Zeiten als abgerechnet markiert",
+            Some("account"),
             Some(&id),
             &format!("{marked} Einträge"),
         )

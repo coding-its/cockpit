@@ -13,6 +13,9 @@ pub struct Customer {
     pub notes: Option<String>,
     pub active: bool,
     pub focus: bool,
+    /// Abrechnungskonto, zu dem dieser Kunde gehört. `None` = eigenständig.
+    pub account_id: Option<String>,
+    pub account_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -93,6 +96,9 @@ pub struct WebClient {
     pub notes: Option<String>,
     pub hourly_rate: f64,
     pub active: bool,
+    /// Abrechnungskonto, zu dem dieser Web-Kunde gehört. `None` = eigenständig.
+    pub account_id: Option<String>,
+    pub account_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -514,11 +520,14 @@ pub struct Dashboard {
     pub integration: IntegrationStatus,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 pub struct BillingCustomer {
     pub customer_id: String,
     pub customer_name: String,
     pub short_code: String,
+    /// Abrechnungskonto, über das die Zeile abgerechnet wird.
+    pub account_id: Option<String>,
+    pub account_code: Option<String>,
     /// Grundlage aller Beträge: die erfassten Sekunden.
     pub billable_seconds: i64,
     pub non_billable_seconds: i64,
@@ -718,6 +727,12 @@ pub struct BillingFilter {
 #[derive(Debug, Deserialize)]
 pub struct BilledRequest {
     pub entry_ids: Vec<String>,
+}
+
+/// Konto, dem ein Kunde zugeordnet wird. `null` löst die Zuordnung.
+#[derive(Debug, Deserialize)]
+pub struct AccountAssignment {
+    pub account_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

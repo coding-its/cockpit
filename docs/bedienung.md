@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.9_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.10_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -42,7 +42,11 @@ Das MSI braucht **Administratorrechte** – Windows fragt beim Doppelklick danac
 Fassung lässt sich normalerweise einfach darüberinstallieren; die Verbindung in
 `%APPDATA%\Wartungscockpit\` bleibt dabei erhalten.
 
-**Wenn die Installation mit 1603 abbricht**, ist meist die alte Fassung im Weg:
+**Wenn die Meldung „Die Anpassung Nr. … stimmt nicht überein" erscheint**, ist eine
+Schema-Anpassung nachträglich verändert worden – ein Fehler in der Auslieferung, nicht an der
+Datenbank. Die Meldung weitergeben; sie ist in der Anwendung zu beheben.
+
+**Wenn die Anwendung mit 1603 abbricht**, ist meist die alte Fassung im Weg:
 
 1. **Einstellungen → Apps → Installierte Apps** → Wartungscockpit → **Deinstallieren**.
 2. Neue MSI installieren.
@@ -509,7 +513,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.9_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.10_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.

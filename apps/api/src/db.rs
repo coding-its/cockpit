@@ -53,10 +53,16 @@ fn migration_message(error: &sqlx::migrate::MigrateError) -> String {
              Version kennt diesen Stand nicht.\n\n\
              Bitte das Wartungscockpit aktualisieren. An den Daten ist nichts beschädigt."
         ),
+        // Prüfsumme weicht ab: Die Anpassung wurde nach ihrem Einspielen noch
+        // geändert. Das ist ein Fehler in der Auslieferung, kein Problem der
+        // Datenbank – der Benutzer kann ihn nicht selbst beheben.
         MigrateError::VersionMismatch(version) => format!(
-            "Schema-Stand {version} passt nicht zu dieser Version des Wartungscockpits. \
-             Vermutlich wurde auf dem Server eine ältere Version eingespielt.\n\n\
-             Bitte die aktuelle Version installieren."
+            "Die Datenbank ist erreichbar und vollständig. Aber die Anpassung Nr. {version} \
+             dieser Programmversion stimmt nicht mit dem überein, was in der Datenbank \
+             eingespielt wurde.\n\n\
+             Das passiert, wenn eine bereits ausgelieferte Anpassung nachträglich verändert \
+             wurde. Bitte diese Meldung weitergeben – sie ist in der Anwendung zu beheben, \
+             nicht an der Datenbank. An den Daten ist nichts beschädigt."
         ),
         other => format!(
             "Die Datenbank ist erreichbar, das Schema ließ sich aber nicht prüfen: {other}"
@@ -170,6 +176,80 @@ fn friendly(message: &str) -> String {
 mod tests {
     use super::{friendly, known_schema_version, migration_message};
     use sqlx::migrate::MigrateError;
+
+    #[test]
+    fn a_changed_migration_does_not_sound_like_a_broken_database() {
+        let message = migration_message(&MigrateError::VersionMismatch(3));
+
+        // Der Benutzer kann das nicht beheben – die Meldung muss das sagen,
+        // ohne ihn zu einem Installationsversuch zu schicken.
+        assert!(message.contains("erreichbar"), "{message}");
+        assert!(message.contains("nachträglich"), "{message}");
+        assert!(message.contains("nichts beschädigt"), "{message}");
+        assert!(!message.contains("ältere Version"), "{message}");
+    }
+
+    /// Eine ausgelieferte Migration darf nicht mehr verändert werden – auch
+    /// nicht im Kommentar. Sonst weicht die Prüfsumme von der Datenbank ab und
+    /// jede Installation scheitert beim Start. Genau das ist einmal passiert.
+    #[test]
+    fn shipped_migrations_are_unverändert() {
+        use sha2::{Digest, Sha384};
+        use std::path::PathBuf;
+
+        let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations_pg");
+        let manifest = std::fs::read_to_string(folder.join("checksums.txt"))
+            .expect("checksums.txt fehlt – Liste der Prüfsummen anlegen");
+
+        let mut listed = std::collections::BTreeMap::new();
+        for line in manifest.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+
+            let mut parts = line.split_whitespace();
+            let version: i64 = parts.next().expect("Version fehlt").parse().expect("Version");
+            let name = parts.next().expect("Dateiname fehlt").to_string();
+            let checksum = parts.next().expect("Prüfsumme fehlt").to_string();
+            listed.insert(version, (name, checksum));
+        }
+
+        for (version, (name, expected)) in &listed {
+            let path = folder.join(name);
+            let raw = std::fs::read(&path)
+                .unwrap_or_else(|_| panic!("{name} fehlt, steht aber in checksums.txt"));
+
+            let digest = Sha384::digest(&raw);
+            let actual: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+
+            assert_eq!(
+                &actual, expected,
+                "\n\n{name} wurde nach dem Ausliefern verändert.\n\
+                 Eine ausgelieferte Migration darf nicht mehr geändert werden – auch nicht \
+                 im Kommentar –, sonst weicht die Prüfsumme von der Datenbank ab und die \
+                 Anwendung startet auf keinem Rechner mehr.\n\
+                 Stattdessen eine neue Migration mit der Änderung anlegen.\n",
+            );
+            let _ = version;
+        }
+
+        // Jede Datei muss in der Liste stehen, damit sie beim Ausliefern
+        // bewusst aufgenommen wird.
+        for entry in std::fs::read_dir(&folder).expect("Ordner lesbar") {
+            let path = entry.expect("Eintrag lesbar").path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("sql") {
+                continue;
+            }
+
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            assert!(
+                listed.values().any(|(listed_name, _)| listed_name == name),
+                "\n{name} ist nicht in migrations_pg/checksums.txt eingetragen.\n\
+                 Eintrag ergänzen, dann ist die Datei als ausgeliefert markiert.\n"
+            );
+        }
+    }
 
     #[test]
     fn a_too_new_schema_points_to_the_application_version() {

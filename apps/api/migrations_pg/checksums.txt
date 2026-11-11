@@ -1,0 +1,14 @@
+# Prüfsummen der ausgelieferten Schema-Anpassungen.
+#
+# Zweck: Eine einmal ausgelieferte Migration darf nicht mehr geändert werden,
+# auch nicht im Kommentar. Sonst weicht die Prüfsumme von der Datenbank ab und
+# jede Installation scheitert beim Start.
+#
+# Neuen Eintrag ergänzen, sobald eine Migration hinzukommt. Der Test
+# `shipped_migrations_are_unverändert` prüft diese Liste.
+#
+# Format: version datei sha384
+1 0001_schema.sql 397d7bd07afa18f5965dba26cf905d8b4f3687e72ab289500417c48adeb87663b0b499545a8fe77cc5ed6ddde8fe0472
+2 0002_billed.sql 52b120aaa2c0075daa4bfb59f2500bdac6ce1b2b5f0bde62bd9355b416005aeb60ffd1351ed923a2c91b0ea87a4e3e48
+3 0003_accounts.sql 9bd11601314ae58360267dfcb033fd2132df859f3aa81b62305069834dc18b01e7634c287d12e37fa93a71826d4a68b8
+4 0004_teamviewer.sql 76570e09e9f281bb8859aab3592be6fa1f530cbcf6f344a9783931bd3c6c3a79b558740cc4744416a8003e3b859ec881

@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   FileText,
   Menu,
+  MonitorSmartphone,
   PlugZap,
   RefreshCw,
   Settings,
@@ -36,7 +37,8 @@ let clock: number | undefined
 const navItems = computed(() => {
   const items = [
     { to: '/', label: 'Übersicht', icon: LayoutDashboard },
-    { to: '/kunden', label: 'Kunden', icon: Users },
+    { to: '/kunden', label: 'NinjaOne', icon: Users },
+    { to: '/teamviewer', label: 'TeamViewer', icon: MonitorSmartphone },
     { to: '/websites', label: 'Websites', icon: Globe2 },
     { to: '/wartungen', label: 'Wartungen', icon: Wrench },
     { to: '/einsaetze', label: 'Einsätze', icon: Inbox },

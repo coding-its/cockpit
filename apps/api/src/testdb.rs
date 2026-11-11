@@ -38,7 +38,7 @@ pub async fn fixture() -> (tokio::sync::MutexGuard<'static, ()>, PgPool) {
         });
 
     sqlx::query(
-        "TRUNCATE accounts, time_entries, device_patches, devices, sites, web_actions, web_clients,
+        "TRUNCATE teamviewer_sessions, teamviewer_groups, accounts, time_entries, device_patches, devices, sites, web_actions, web_clients,
                   tasks, jobs, task_executions, runs, contracts, customers,
                   sessions, app_users, audit_events, app_settings CASCADE",
     )

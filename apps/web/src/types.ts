@@ -743,3 +743,43 @@ export interface Account {
   customer_count: number
   web_client_count: number
 }
+
+/** TeamViewer-Kundengruppe mit Kennzahlen des Monats. */
+export interface TeamViewerGroup {
+  group_id: string
+  name: string
+  customer_id: string | null
+  web_client_id: string | null
+  assigned_to: string | null
+  account_code: string | null
+  sessions: number
+  open_sessions: number
+  seconds: number
+  open_seconds: number
+  fee: number
+  suggested_id: string | null
+  suggested_name: string | null
+}
+
+/** Einzelne TeamViewer-Verbindung. */
+export interface TeamViewerSession {
+  id: string
+  group_id: string | null
+  group_name: string | null
+  device_name: string | null
+  user_name: string | null
+  started_at: string
+  ended_at: string | null
+  duration_seconds: number
+  fee: number
+  notes: string | null
+  imported_entry_id: string | null
+  unusual: boolean
+}
+
+export interface TeamViewerStatus {
+  configured: boolean
+  sessions: number
+  groups: number
+  last_sync: string | null
+}

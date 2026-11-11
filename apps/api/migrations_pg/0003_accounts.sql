@@ -1,7 +1,7 @@
 -- Abrechnungskonten: eine Firma, eine Rechnung – auch wenn sie im Cockpit
 -- über mehrere Quellen verteilt ist.
 --
--- Anlass: „Autohaus Schmohl" heißt in NinjaOne so, in TeamViewer „AHSchmohl",
+-- Anlass: Dieselbe Firma heißt in der einen Quelle abgekürzt, in der anderen
 -- und dieselbe Firma kann zusätzlich als Web-Kunde geführt werden. Ohne
 -- gemeinsamen Bezug erscheint sie im Bericht mehrfach, und die Rechnung
 -- zerfällt in Bruchstücke.
@@ -16,7 +16,7 @@
 
 CREATE TABLE accounts (
     id TEXT PRIMARY KEY,
-    -- Kürzel für die Anzeige, z. B. „AHS".
+    -- Kürzel für die Anzeige, z. B. „MWK".
     code TEXT NOT NULL,
     name TEXT NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -24,7 +24,7 @@ CREATE TABLE accounts (
 );
 
 -- Kürzel sind innerhalb der Konten eindeutig – unabhängig von Groß- und
--- Kleinschreibung, damit „ahs" und „AHS" nicht zwei Konten werden.
+-- Kleinschreibung, damit „ahs" und „MWK" nicht zwei Konten werden.
 CREATE UNIQUE INDEX idx_accounts_code ON accounts (lower(code));
 
 ALTER TABLE customers ADD COLUMN account_id TEXT REFERENCES accounts(id) ON DELETE SET NULL;

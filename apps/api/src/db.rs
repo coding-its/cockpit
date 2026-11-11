@@ -184,8 +184,9 @@ mod tests {
 
     #[test]
     fn known_schema_version_matches_the_shipped_migrations() {
-        // 0001_schema, 0002_billed, 0003_accounts – wächst mit jeder neuen Datei.
-        assert_eq!(known_schema_version(), 3);
+        // 0001_schema, 0002_billed, 0003_accounts, 0004_teamviewer –
+        // wächst mit jeder neuen Datei.
+        assert_eq!(known_schema_version(), 4);
     }
 
     #[test]

@@ -26,6 +26,7 @@ mod seed;
 mod settings;
 mod statement;
 mod state;
+mod teamviewer;
 mod util;
 mod wordpress;
 

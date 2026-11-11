@@ -137,11 +137,11 @@ onMounted(load)
       <form class="account-create" @submit.prevent="create">
         <label class="field">
           <span>Kürzel</span>
-          <input v-model="draft.code" type="text" maxlength="12" placeholder="AHS" />
+          <input v-model="draft.code" type="text" maxlength="12" placeholder="MWK" />
         </label>
         <label class="field field--grow">
           <span>Name</span>
-          <input v-model="draft.name" type="text" placeholder="Autohaus Schmohl" />
+          <input v-model="draft.name" type="text" placeholder="Musterwerk GmbH" />
         </label>
         <button class="btn btn-primary" type="submit" :disabled="creating">
           <Plus :size="15" />

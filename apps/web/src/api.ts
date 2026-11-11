@@ -37,6 +37,9 @@ import type {
   SiteAgentStatus,
   Statement,
   SyncResult,
+  TeamViewerGroup,
+  TeamViewerSession,
+  TeamViewerStatus,
   Task,
   TimeEntry,
   UpdateWebSitePayload,
@@ -339,6 +342,32 @@ export const api = {
       body: JSON.stringify({ entry_ids: entryIds }),
     }),
   accounts: () => request<Account[]>('/accounts'),
+  teamviewerStatus: () => request<TeamViewerStatus>('/teamviewer/status'),
+  teamviewerGroups: (month: string) =>
+    request<TeamViewerGroup[]>(`/teamviewer?month=${encodeURIComponent(month)}`),
+  teamviewerSessions: (month: string, groupId?: string) => {
+    const params = new URLSearchParams({ month })
+    if (groupId) params.set('group_id', groupId)
+    return request<TeamViewerSession[]>(`/teamviewer/sessions?${params.toString()}`)
+  },
+  teamviewerSync: (month: string) =>
+    request<{ groups: number; sessions: number; message: string }>(
+      `/teamviewer/sync?month=${encodeURIComponent(month)}`,
+      { method: 'POST' },
+    ),
+  teamviewerAssign: (
+    groupId: string,
+    payload: { customer_id?: string | null; web_client_id?: string | null; ignored?: boolean },
+  ) =>
+    request<{ ok: boolean }>(`/teamviewer/groups/${groupId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  teamviewerImport: (groupId: string, month: string, billable = true) =>
+    request<{ created: number; skipped: number; message: string }>(
+      `/teamviewer/groups/${groupId}/import`,
+      { method: 'POST', body: JSON.stringify({ month, billable }) },
+    ),
   createAccount: (payload: { code: string; name: string }) =>
     request<Account>('/accounts', { method: 'POST', body: JSON.stringify(payload) }),
   updateAccount: (

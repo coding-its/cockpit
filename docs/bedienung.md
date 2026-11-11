@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.8_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.9_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -509,7 +509,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.8_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.9_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -583,6 +583,51 @@ einer Seite.
 deines Chefs mit einem eigenen Konto arbeiten, ohne irgendetwas ändern zu können.
 
 Jede Erzeugung landet als **„Monatsbericht erzeugt"** im Audit-Trail, mit Benutzer und Monat.
+
+## TeamViewer (Fernwartungszeiten)
+
+**TeamViewer** in der linken Leiste zeigt die Verbindungen, die im TeamViewer-Konto
+protokolliert sind – mit Datum, Gerät, Person und Dauer.
+
+**Einrichten:** Im TeamViewer Management Console einen **Script-Token** anlegen
+(*Profil bearbeiten → Apps → Skript-Token erstellen*) mit diesen lesenden Rechten:
+
+- **Verbindungsprotokollierung** → Verbindungsprotokolle lesen
+- **Computer & Kontakte** → Einträge anzeigen
+- **Sessionverwaltung** → eigene Sitzungen anzeigen *und* alle Sitzungen anzeigen
+
+Den Token nach `data/teamviewer-token.txt` schreiben (oder nach
+`%APPDATA%\Wartungscockpit\teamviewer-token.txt`) - nur den Token, sonst nichts.
+Die Datei ist von Git ausgenommen und liegt außerhalb des Programms.
+
+**Abgleichen:** **Jetzt abgleichen** holt die Verbindungen des gewählten Monats.
+Es wird nichts automatisch übernommen – der Abgleich füllt nur die Liste.
+
+**Zuordnen:** TeamViewer führt eigene Kundennamen. Jede Gruppe wird über die Auswahlliste
+einem vorhandenen Kunden (oder Web-Kunden) zugeordnet. Passt ein Name, steht ein **Vorschlag**
+in der Liste – gespeichert wird nichts, bis Du ihn auswählst. Gruppen ohne Kunden zeigen einen
+Hinweis und lassen sich ausblenden.
+
+Ein eigener TeamViewer-Kundenstamm entsteht bewusst **nicht**: Sonst stünde dieselbe Firma
+mehrfach im Cockpit. Gehört der Kunde zu einem Abrechnungskonto, laufen seine TeamViewer-Zeiten
+automatisch in dieselbe Rechnung.
+
+**Übernehmen:** **Übernehmen** macht aus den offenen Verbindungen einer Gruppe Zeiteinträge
+(`Fernwartung`, Quelle „TeamViewer", Kommentar = TeamViewer-Notiz). Die Dauer kommt aus den
+Zeitstempeln und bleibt sekundengenau; es gilt dieselbe Rechenregel wie überall
+(siehe „Wie abgerechnet wird"). Ein zweiter Klick übernimmt nichts doppelt.
+
+**Verbindungszeit ist nicht Arbeitszeit.** Deshalb wird nichts automatisch abrechenbar:
+Sitzungen über vier Stunden werden als **auffällig lang** markiert und vor der Übernahme
+ausdrücklich genannt – in der Praxis sind das meist vergessene Logouts.
+
+**Was der Token sieht:** nur die Verbindungen seines Benutzers. Für jeden Techniker braucht es
+einen eigenen Token, sonst fehlen dessen Sitzungen. Der Token lässt sich nachträglich nicht
+ändern, nur löschen und neu anlegen.
+
+**Vergleich:** Die Kennzahl **TeamViewer rechnet** zeigt die Summe der Beträge, die TeamViewer
+selbst aus den Verbindungen errechnet hat. Weicht sie stark ab, lohnt ein Blick auf die
+Sitzungsliste.
 
 ## Abrechnungskonten (eine Firma, eine Rechnung)
 

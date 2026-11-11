@@ -1005,7 +1005,7 @@ mod tests {
         customer_with(&pool, "c1", 0.0, 100.0).await;
         sqlx::query(
             "INSERT INTO web_clients (id, name, short_code, active, created_at)
-             VALUES ('w1', 'Musterwerk Web', 'AHSW', true, $1)",
+             VALUES ('w1', 'Musterwerk Web', 'MWKW', true, $1)",
         )
         .bind(now_iso())
         .execute(&pool)

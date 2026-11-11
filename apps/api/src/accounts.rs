@@ -39,7 +39,7 @@ pub struct UpdateAccountRequest {
     pub active: Option<bool>,
 }
 
-/// Kürzel normalisieren: „ahs" und „ AHS " sind dasselbe Konto.
+/// Kürzel normalisieren: „mwk" und „ MWK " sind dasselbe Konto.
 pub fn normalize_code(code: &str) -> String {
     code.trim().to_uppercase()
 }
@@ -223,9 +223,9 @@ mod tests {
     async fn code_is_normalized_so_case_does_not_create_duplicates() {
         let (_guard, pool) = testdb::fixture().await;
 
-        assert!(create(&pool, "ahs", "Autohaus Schmohl").await.unwrap().is_some());
+        assert!(create(&pool, "mwk", "Musterwerk GmbH").await.unwrap().is_some());
         assert!(
-            create(&pool, " AHs ", "Nochmal").await.unwrap().is_none(),
+            create(&pool, " MWk ", "Nochmal").await.unwrap().is_none(),
             "dasselbe Kürzel in anderer Schreibweise darf kein zweites Konto anlegen"
         );
     }
@@ -233,11 +233,11 @@ mod tests {
     #[tokio::test]
     async fn customers_and_web_clients_can_share_one_account() {
         let (_guard, pool) = testdb::fixture().await;
-        let account = create(&pool, "AHS", "Autohaus Schmohl").await.unwrap().unwrap();
+        let account = create(&pool, "MWK", "Musterwerk GmbH").await.unwrap().unwrap();
 
         sqlx::query(
             "INSERT INTO customers (id, name, short_code, active, created_at)
-             VALUES ('c1', 'Autohaus Schmohl', 'AS', true, $1)",
+             VALUES ('c1', 'Musterwerk GmbH', 'AS', true, $1)",
         )
         .bind(now_iso())
         .execute(&pool)
@@ -245,7 +245,7 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO web_clients (id, name, short_code, active, created_at)
-             VALUES ('w1', 'Autohaus Schmohl Web', 'AHSW', true, $1)",
+             VALUES ('w1', 'Musterwerk Web', 'MWKW', true, $1)",
         )
         .bind(now_iso())
         .execute(&pool)
@@ -267,11 +267,11 @@ mod tests {
     #[tokio::test]
     async fn clearing_the_assignment_leaves_the_customer_intact() {
         let (_guard, pool) = testdb::fixture().await;
-        let account = create(&pool, "AHS", "Autohaus Schmohl").await.unwrap().unwrap();
+        let account = create(&pool, "MWK", "Musterwerk GmbH").await.unwrap().unwrap();
 
         sqlx::query(
             "INSERT INTO customers (id, name, short_code, active, created_at)
-             VALUES ('c1', 'Autohaus Schmohl', 'AS', true, $1)",
+             VALUES ('c1', 'Musterwerk GmbH', 'AS', true, $1)",
         )
         .bind(now_iso())
         .execute(&pool)

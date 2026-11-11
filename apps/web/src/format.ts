@@ -61,6 +61,22 @@ export function formatDuration(seconds: number): string {
   return `${rest} s`
 }
 
+/**
+ * Dauer ohne Sekundenstellen, sobald sie über eine Stunde liegt – für
+ * Kennzahlen, wo „34 h 39 min 34 s" nur unruhig wirkt. In Nachweisen, aus
+ * denen Beträge nachgerechnet werden, bleibt `formatDuration` zuständig.
+ */
+export function formatDurationCompact(seconds: number): string {
+  const total = Math.max(0, Math.round(seconds))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const rest = total % 60
+
+  if (hours > 0) return `${hours} h ${String(minutes).padStart(2, '0')} min`
+  if (minutes > 0) return `${minutes} min ${String(rest).padStart(2, '0')} s`
+  return `${rest} s`
+}
+
 export function formatTimer(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds))
   const hours = Math.floor(total / 3600)

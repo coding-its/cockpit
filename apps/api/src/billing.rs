@@ -11,7 +11,6 @@ struct BillingRow {
     customer_name: String,
     short_code: String,
     included_hours: f64,
-    hourly_rate: f64,
     flat_fee: f64,
     billable_seconds: i64,
     non_billable_seconds: i64,
@@ -44,7 +43,6 @@ pub async fn summary(
             c.name AS customer_name,
             c.short_code,
             CAST(COALESCE(ct.included_hours, 0) AS DOUBLE PRECISION) AS included_hours,
-            CAST(COALESCE(ct.hourly_rate, 0) AS DOUBLE PRECISION) AS hourly_rate,
             CAST(COALESCE(acct.hourly_rate, ct.hourly_rate, 0) AS DOUBLE PRECISION) AS effective_rate,
             CAST(COALESCE(ct.flat_fee, 0) AS DOUBLE PRECISION) AS flat_fee,
             c.account_id, ca.code AS account_code,
@@ -72,7 +70,7 @@ pub async fn summary(
             AND substr(te.started_at, 1, 7) = $1
         WHERE c.active = true
           AND (NOT $2 OR c.focus = true)
-        GROUP BY c.id, c.name, c.short_code, ct.included_hours, ct.hourly_rate, ct.flat_fee,
+        GROUP BY c.id, c.name, c.short_code, ct.included_hours, ct.flat_fee, ct.hourly_rate,
                  c.account_id, ca.code, acct.hourly_rate
 
         UNION ALL
@@ -82,7 +80,6 @@ pub async fn summary(
             w.name AS customer_name,
             w.short_code,
             0.0 AS included_hours,
-            CAST(w.hourly_rate AS DOUBLE PRECISION) AS hourly_rate,
             CAST(COALESCE(acct.hourly_rate, w.hourly_rate, 0) AS DOUBLE PRECISION) AS effective_rate,
             0.0 AS flat_fee,
             w.account_id, wa.code AS account_code,
@@ -106,7 +103,8 @@ pub async fn summary(
             ON te.web_client_id = w.id
             AND substr(te.started_at, 1, 7) = $1
         WHERE w.active = true
-        GROUP BY w.id, w.name, w.short_code, w.hourly_rate, w.account_id, wa.code, acct.hourly_rate
+        GROUP BY w.id, w.name, w.short_code, w.hourly_rate, w.account_id, wa.code,
+                 acct.hourly_rate
         )
         ORDER BY customer_name
         "#,
@@ -381,7 +379,7 @@ mod tests {
         customer(&pool, "c1", 100.0, 0.0).await;
         sqlx::query(
             "INSERT INTO web_clients (id, name, short_code, active, created_at)
-             VALUES ('w1', 'Musterwerk Web', 'AHSW', true, $1)",
+             VALUES ('w1', 'Musterwerk Web', 'MWKW', true, $1)",
         )
         .bind(now_iso())
         .execute(&pool)

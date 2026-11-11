@@ -6,7 +6,7 @@ use axum::extract::{Path, Query, State};
 use axum::response::{Html, IntoResponse};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
@@ -41,6 +41,18 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/v1/accounts/{id}/statement/billed",
             post(mark_account_statement),
+        )
+        .route("/api/v1/teamviewer", get(teamviewer_groups))
+        .route("/api/v1/teamviewer/status", get(teamviewer_status))
+        .route("/api/v1/teamviewer/sync", post(teamviewer_sync))
+        .route("/api/v1/teamviewer/sessions", get(teamviewer_sessions))
+        .route(
+            "/api/v1/teamviewer/groups/{group_id}",
+            axum::routing::patch(teamviewer_assign),
+        )
+        .route(
+            "/api/v1/teamviewer/groups/{group_id}/import",
+            post(teamviewer_import),
         )
         .route("/api/v1/customers/{id}/statement", get(customer_statement))
         .route(
@@ -1867,6 +1879,246 @@ pub async fn mark_customer_statement(
     }
 
     Ok(Json(BilledResponse { marked }))
+}
+
+// ---------------------------------------------------------------------------
+// TeamViewer
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+pub struct TeamViewerFilter {
+    pub month: Option<String>,
+    pub group_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TeamViewerAssignRequest {
+    pub customer_id: Option<String>,
+    pub web_client_id: Option<String>,
+    /// Gruppe ausblenden, statt sie zuzuordnen.
+    pub ignored: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TeamViewerImportRequest {
+    pub month: String,
+    /// Vorgabe: abrechenbar. Verbindungszeit kann aber auch intern sein.
+    pub billable: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TeamViewerStatus {
+    pub configured: bool,
+    /// Anzahl abgelegter Verbindungen und Gruppen.
+    pub sessions: i64,
+    pub groups: i64,
+    pub last_sync: Option<String>,
+}
+
+pub async fn teamviewer_status(
+    State(state): State<SharedState>,
+    _user: CurrentUser,
+) -> ApiResult<Json<TeamViewerStatus>> {
+    let sessions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teamviewer_sessions")
+        .fetch_one(&state.pool)
+        .await?;
+    let groups: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM teamviewer_groups")
+        .fetch_one(&state.pool)
+        .await?;
+    let last_sync: Option<String> =
+        sqlx::query_scalar("SELECT MAX(synced_at) FROM teamviewer_sessions")
+            .fetch_one(&state.pool)
+            .await
+            .ok()
+            .flatten();
+
+    Ok(Json(TeamViewerStatus {
+        configured: crate::teamviewer::configured(),
+        sessions,
+        groups,
+        last_sync,
+    }))
+}
+
+/// Holt die Verbindungen des Monats (und des Vormonats) von TeamViewer.
+pub async fn teamviewer_sync(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Query(filter): Query<TeamViewerFilter>,
+) -> ApiResult<Json<crate::teamviewer::SyncReport>> {
+    let month = filter.month.unwrap_or_else(current_month);
+    if !crate::reports::valid_month(&month) {
+        return Err(ApiError::BadRequest(
+            "Monat muss im Format YYYY-MM liegen, Monat 01 bis 12.".to_string(),
+        ));
+    }
+
+    let (from, to) = month_bounds(&month)?;
+    let report = crate::teamviewer::sync(&state.pool, &from, &to)
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "TeamViewer abgeglichen",
+        Some("teamviewer"),
+        None,
+        &report.message,
+    )
+    .await?;
+
+    Ok(Json(report))
+}
+
+pub async fn teamviewer_groups(
+    State(state): State<SharedState>,
+    _user: CurrentUser,
+    Query(filter): Query<TeamViewerFilter>,
+) -> ApiResult<Json<Vec<crate::teamviewer::GroupRow>>> {
+    let month = filter.month.unwrap_or_else(current_month);
+    if !crate::reports::valid_month(&month) {
+        return Err(ApiError::BadRequest(
+            "Monat muss im Format YYYY-MM liegen, Monat 01 bis 12.".to_string(),
+        ));
+    }
+
+    Ok(Json(crate::teamviewer::groups(&state.pool, &month).await?))
+}
+
+pub async fn teamviewer_sessions(
+    State(state): State<SharedState>,
+    _user: CurrentUser,
+    Query(filter): Query<TeamViewerFilter>,
+) -> ApiResult<Json<Vec<crate::teamviewer::SessionRow>>> {
+    let month = filter.month.unwrap_or_else(current_month);
+    if !crate::reports::valid_month(&month) {
+        return Err(ApiError::BadRequest(
+            "Monat muss im Format YYYY-MM liegen, Monat 01 bis 12.".to_string(),
+        ));
+    }
+
+    Ok(Json(
+        crate::teamviewer::sessions(&state.pool, &month, filter.group_id.as_deref()).await?,
+    ))
+}
+
+pub async fn teamviewer_assign(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(group_id): Path<String>,
+    Json(payload): Json<TeamViewerAssignRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    if let Some(ignored) = payload.ignored {
+        crate::teamviewer::set_ignored(&state.pool, &group_id, ignored)
+            .await
+            .map_err(ApiError::BadRequest)?;
+
+        audit(
+            &state.pool,
+            user.actor(),
+            if ignored {
+                "TeamViewer-Gruppe ausgeblendet"
+            } else {
+                "TeamViewer-Gruppe eingeblendet"
+            },
+            Some("teamviewer_group"),
+            Some(&group_id),
+            "",
+        )
+        .await?;
+
+        return Ok(Json(serde_json::json!({ "ok": true })));
+    }
+
+    crate::teamviewer::assign(
+        &state.pool,
+        &group_id,
+        payload.customer_id.as_deref(),
+        payload.web_client_id.as_deref(),
+    )
+    .await
+    .map_err(ApiError::BadRequest)?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "TeamViewer-Gruppe zugeordnet",
+        Some("teamviewer_group"),
+        Some(&group_id),
+        payload
+            .customer_id
+            .as_deref()
+            .or(payload.web_client_id.as_deref())
+            .unwrap_or("Zuordnung gelöst"),
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Übernimmt die offenen Verbindungen einer Gruppe als Zeiteinträge.
+pub async fn teamviewer_import(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(group_id): Path<String>,
+    Json(payload): Json<TeamViewerImportRequest>,
+) -> ApiResult<Json<crate::teamviewer::ImportReport>> {
+    if !crate::reports::valid_month(&payload.month) {
+        return Err(ApiError::BadRequest(
+            "Monat muss im Format YYYY-MM liegen, Monat 01 bis 12.".to_string(),
+        ));
+    }
+
+    let report = crate::teamviewer::import_sessions(
+        &state.pool,
+        &group_id,
+        &payload.month,
+        payload.billable.unwrap_or(true),
+    )
+    .await
+    .map_err(ApiError::BadRequest)?;
+
+    if report.created > 0 {
+        audit(
+            &state.pool,
+            user.actor(),
+            "TeamViewer-Verbindungen übernommen",
+            Some("teamviewer_group"),
+            Some(&group_id),
+            &report.message,
+        )
+        .await?;
+    }
+
+    Ok(Json(report))
+}
+
+/// Erster und letzter Tag eines Monats als `YYYY-MM-DD`.
+fn month_bounds(month: &str) -> ApiResult<(String, String)> {
+    let year: i32 = month[..4]
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Jahr unlesbar.".to_string()))?;
+    let number: u32 = month[5..]
+        .parse()
+        .map_err(|_| ApiError::BadRequest("Monat unlesbar.".to_string()))?;
+
+    let first = chrono::NaiveDate::from_ymd_opt(year, number, 1)
+        .ok_or_else(|| ApiError::BadRequest("Ungültiger Monat.".to_string()))?;
+
+    let next = if number == 12 {
+        chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        chrono::NaiveDate::from_ymd_opt(year, number + 1, 1)
+    }
+    .ok_or_else(|| ApiError::BadRequest("Ungültiger Monat.".to_string()))?;
+
+    let last = next - chrono::Duration::days(1);
+
+    Ok((
+        first.format("%Y-%m-%d").to_string(),
+        last.format("%Y-%m-%d").to_string(),
+    ))
 }
 
 // ---------------------------------------------------------------------------

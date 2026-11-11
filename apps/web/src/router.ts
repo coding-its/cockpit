@@ -52,6 +52,12 @@ const router = createRouter({
       meta: { title: 'Einsätze' },
     },
     {
+      path: '/teamviewer',
+      name: 'teamviewer',
+      component: () => import('./views/TeamViewerView.vue'),
+      meta: { title: 'TeamViewer' },
+    },
+    {
       path: '/websites',
       name: 'websites',
       component: () => import('./views/WebsitesView.vue'),

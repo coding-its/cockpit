@@ -214,6 +214,318 @@ pub async fn members(
     Ok((customers, web_clients))
 }
 
+// ---------------------------------------------------------------------------
+// Zuordnung von der Kontoseite aus
+// ---------------------------------------------------------------------------
+
+/// Ein Konto mit seinen zugeordneten Datensätzen – für die Übersicht in den
+/// Einstellungen, wo die Zuordnung an **einer** Stelle gepflegt wird.
+#[derive(Debug, Serialize)]
+pub struct AccountAssignmentRow {
+    pub account_id: String,
+    pub code: String,
+    pub name: String,
+    pub active: bool,
+    /// Zuordnung aus der einen Quelle (NinjaOne-Kunde).
+    pub customer_id: Option<String>,
+    pub customer_name: Option<String>,
+    /// Zuordnung aus der anderen Quelle (Web-Kunde).
+    pub web_client_id: Option<String>,
+    pub web_client_name: Option<String>,
+    /// TeamViewer-Gruppen, die auf dieses Konto zeigen.
+    pub teamviewer_groups: Vec<TeamViewerAssignment>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TeamViewerAssignment {
+    pub group_id: String,
+    pub name: String,
+}
+
+/// Eine Auswahlmöglichkeit in den Klapplisten.
+#[derive(Debug, Serialize)]
+pub struct AssignmentTarget {
+    pub id: String,
+    pub name: String,
+    /// Bereits einem anderen Konto zugeordnet – wird im Menü gekennzeichnet.
+    pub taken_by: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountOverview {
+    pub accounts: Vec<AccountAssignmentRow>,
+    /// Kunden, die noch keinem Konto zugeordnet sind ODER diesem zugeordnet
+    /// sind. Bereits vergebene erscheinen mit `taken_by`, damit man sieht,
+    /// warum ein Wechsel das andere Konto leert.
+    pub customers: Vec<AssignmentTarget>,
+    pub web_clients: Vec<AssignmentTarget>,
+    pub teamviewer_groups: Vec<AssignmentTarget>,
+    /// Datensätze ohne Konto – hier beginnt die Arbeit.
+    pub unassigned_customers: usize,
+    pub unassigned_teamviewer: usize,
+}
+
+/// Baut die Übersicht für die Einstellungen.
+///
+/// Die Konten führen; je Konto stehen die zugeordneten Datensätze. Die Listen
+/// enthalten **alle** Datensätze mit dem Hinweis, welchem Konto sie gehören –
+/// so ist ein Umhängen möglich, ohne dass eine Zeile aus dem Menü verschwindet.
+pub async fn overview(pool: &PgPool) -> Result<AccountOverview, sqlx::Error> {
+    let rows = list(pool).await?;
+
+    let accounts: Vec<AccountAssignmentRow> = rows
+        .into_iter()
+        .map(|account| AccountAssignmentRow {
+            account_id: account.id,
+            code: account.code,
+            name: account.name,
+            active: account.active,
+            customer_id: None,
+            customer_name: None,
+            web_client_id: None,
+            web_client_name: None,
+            teamviewer_groups: Vec::new(),
+        })
+        .collect();
+
+    let mut accounts = accounts;
+
+    let customers: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT c.id, c.name, c.account_id, a.code
+         FROM customers c
+         LEFT JOIN accounts a ON a.id = c.account_id
+         WHERE c.active = true
+         ORDER BY c.name",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let web_clients: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT w.id, w.name, w.account_id, a.code
+         FROM web_clients w
+         LEFT JOIN accounts a ON a.id = w.account_id
+         WHERE w.active = true
+         ORDER BY w.name",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let groups: Vec<(String, String, Option<String>, Option<String>, Option<String>)> =
+        sqlx::query_as(
+            "SELECT g.group_id, g.name, c.account_id, w.account_id, a.code
+             FROM teamviewer_groups g
+             LEFT JOIN customers c ON c.id = g.customer_id
+             LEFT JOIN web_clients w ON w.id = g.web_client_id
+             LEFT JOIN accounts a ON a.id = COALESCE(c.account_id, w.account_id)
+             WHERE g.ignored = false
+             ORDER BY g.name",
+        )
+        .fetch_all(pool)
+        .await?;
+
+    // Je Konto den ersten zugeordneten Kunden und Web-Kunden eintragen.
+    for account in accounts.iter_mut() {
+        if let Some((id, name, _, _)) = customers
+            .iter()
+            .find(|c| c.2.as_deref() == Some(account.account_id.as_str()))
+        {
+            account.customer_id = Some(id.clone());
+            account.customer_name = Some(name.clone());
+        }
+
+        if let Some((id, name, _, _)) = web_clients
+            .iter()
+            .find(|c| c.2.as_deref() == Some(account.account_id.as_str()))
+        {
+            account.web_client_id = Some(id.clone());
+            account.web_client_name = Some(name.clone());
+        }
+
+        account.teamviewer_groups = groups
+            .iter()
+            .filter(|g| {
+                g.2.as_deref() == Some(account.account_id.as_str())
+                    || g.3.as_deref() == Some(account.account_id.as_str())
+            })
+            .map(|g| TeamViewerAssignment {
+                group_id: g.0.clone(),
+                name: g.1.clone(),
+            })
+            .collect();
+    }
+
+    let unassigned_customers = customers.iter().filter(|c| c.2.is_none()).count();
+    let unassigned_teamviewer = groups.iter().filter(|g| g.4.is_none()).count();
+
+    Ok(AccountOverview {
+        accounts,
+        customers: customers
+            .into_iter()
+            .map(|(id, name, _, code)| AssignmentTarget {
+                id,
+                name,
+                taken_by: code,
+            })
+            .collect(),
+        web_clients: web_clients
+            .into_iter()
+            .map(|(id, name, _, code)| AssignmentTarget {
+                id,
+                name,
+                taken_by: code,
+            })
+            .collect(),
+        teamviewer_groups: groups
+            .into_iter()
+            .map(|(id, name, _, _, code)| AssignmentTarget {
+                id,
+                name,
+                taken_by: code,
+            })
+            .collect(),
+        unassigned_customers,
+        unassigned_teamviewer,
+    })
+}
+
+/// Ordnet eine TeamViewer-Gruppe über das Konto zu.
+///
+/// Anders als in der TeamViewer-Ansicht wird hier **das Konto** gewählt: Die
+/// Gruppe zeigt dann auf den ersten Kunden des Kontos. Das hält beide
+/// Sichtweisen konsistent – wer hier zuordnet, sieht dasselbe in TeamViewer.
+pub async fn assign_group_to_account(
+    pool: &PgPool,
+    group_id: &str,
+    account_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(account_id) = account_id else {
+        return crate::teamviewer::assign(pool, group_id, None, None).await;
+    };
+
+    // Bevorzugt ein NinjaOne-Kunde des Kontos, sonst ein Web-Kunde.
+    let customer: Option<String> =
+        sqlx::query_scalar("SELECT id FROM customers WHERE account_id = $1 ORDER BY name LIMIT 1")
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+
+    if customer.is_none() {
+        let web: Option<String> = sqlx::query_scalar(
+            "SELECT id FROM web_clients WHERE account_id = $1 ORDER BY name LIMIT 1",
+        )
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+
+        if web.is_none() {
+            return Err(
+                "Diesem Konto ist noch kein Kunde zugeordnet. Bitte zuerst in der Spalte 
+                 NinjaOne oder Web einen Datensatz wählen."
+                    .to_string(),
+            );
+        }
+
+        return crate::teamviewer::assign(pool, group_id, None, web.as_deref()).await;
+    }
+
+    crate::teamviewer::assign(pool, group_id, customer.as_deref(), None).await
+}
+
+#[cfg(test)]
+mod overview_tests {
+    use super::*;
+    use crate::testdb;
+
+    #[tokio::test]
+    async fn overview_shows_assigned_and_free_datasets() {
+        let (_guard, pool) = testdb::fixture().await;
+        let account = create(&pool, "MWK", "Musterwerk GmbH").await.unwrap().unwrap();
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, $1),
+                    ('c2', 'Ohne Konto', 'OHK', true, $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assign_customer(&pool, "c1", Some(&account.id)).await.unwrap();
+
+        let view = overview(&pool).await.unwrap();
+
+        let row = &view.accounts[0];
+        assert_eq!(row.customer_name.as_deref(), Some("Musterwerk GmbH"));
+        assert_eq!(view.unassigned_customers, 1);
+        // Beide Kunden stehen im Menü, der vergebene mit Kontokürzel.
+        assert_eq!(view.customers.len(), 2);
+        assert_eq!(
+            view.customers
+                .iter()
+                .find(|c| c.id == "c1")
+                .and_then(|c| c.taken_by.clone())
+                .as_deref(),
+            Some("MWK")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_group_is_assigned_to_the_accounts_customer() {
+        let (_guard, pool) = testdb::fixture().await;
+        let account = create(&pool, "MWK", "Musterwerk GmbH").await.unwrap().unwrap();
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+        assign_customer(&pool, "c1", Some(&account.id)).await.unwrap();
+
+        sqlx::query(
+            "INSERT INTO teamviewer_groups (group_id, name, updated_at)
+             VALUES ('g1', 'Musterwerk', $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assign_group_to_account(&pool, "g1", Some(&account.id))
+            .await
+            .unwrap();
+
+        let view = overview(&pool).await.unwrap();
+        assert_eq!(view.accounts[0].teamviewer_groups.len(), 1);
+        assert_eq!(view.unassigned_teamviewer, 0);
+    }
+
+    #[tokio::test]
+    async fn an_empty_account_is_refused() {
+        let (_guard, pool) = testdb::fixture().await;
+        let account = create(&pool, "LEER", "Noch nichts").await.unwrap().unwrap();
+
+        sqlx::query(
+            "INSERT INTO teamviewer_groups (group_id, name, updated_at)
+             VALUES ('g1', 'Irgendwas', $1)",
+        )
+        .bind(now_iso())
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let error = assign_group_to_account(&pool, "g1", Some(&account.id))
+            .await
+            .unwrap_err();
+        assert!(error.contains("kein Kunde"), "{error}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

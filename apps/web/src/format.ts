@@ -203,6 +203,7 @@ export function sourceLabel(source: string): string {
       timer: 'Timer',
       manual: 'Manuell',
       machine: 'Maschinenzeit',
+      teamviewer: 'TeamViewer',
     }[source] ?? source
   )
 }

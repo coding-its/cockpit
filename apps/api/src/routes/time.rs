@@ -367,14 +367,31 @@ pub async fn remove(
     user: CurrentUser,
     Path(id): Path<String>,
 ) -> ApiResult<StatusCode> {
-    let result = sqlx::query("DELETE FROM time_entries WHERE id = $1")
+    // Aus TeamViewer übernommene Zeiten sind ein Nachweis: Sie spiegeln eine
+    // protokollierte Verbindung. Löschen würde die Spur zwischen Rechnung und
+    // Protokoll trennen. Rücknahme läuft über die Verbindung selbst.
+    let source: Option<String> = sqlx::query_scalar("SELECT source FROM time_entries WHERE id = $1")
+        .bind(&id)
+        .fetch_optional(&state.pool)
+        .await?;
+
+    let Some(source) = source else {
+        return Err(ApiError::NotFound(format!("Zeiteintrag {id} nicht gefunden")));
+    };
+
+    if source == "teamviewer" {
+        return Err(ApiError::BadRequest(
+            "Dieser Eintrag stammt aus einer TeamViewer-Verbindung und lässt sich nicht löschen. \
+             Die Übernahme lässt sich unter TeamViewer zurücknehmen – dort ist die Verbindung \
+             dokumentiert."
+                .to_string(),
+        ));
+    }
+
+    sqlx::query("DELETE FROM time_entries WHERE id = $1")
         .bind(&id)
         .execute(&state.pool)
         .await?;
-
-    if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound(format!("Zeiteintrag {id} nicht gefunden")));
-    }
 
     audit(
         &state.pool,

@@ -33,6 +33,8 @@ import type {
   RunDetail,
   RunListItem,
   Account,
+  AccountOverview,
+  ActivityKind,
   Site,
   SiteAgentStatus,
   Statement,
@@ -342,6 +344,23 @@ export const api = {
       body: JSON.stringify({ entry_ids: entryIds }),
     }),
   accounts: () => request<Account[]>('/accounts'),
+  accountsOverview: () => request<AccountOverview>('/accounts/overview'),
+  activities: (includeInactive = false) =>
+    request<ActivityKind[]>(`/activities?include_inactive=${includeInactive}`),
+  createActivity: (name: string) =>
+    request<ActivityKind>('/activities', { method: 'POST', body: JSON.stringify({ name }) }),
+  updateActivity: (id: string, payload: { name?: string; active?: boolean }) =>
+    request<ActivityKind>(`/activities/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  assignGroupToAccount: (groupId: string, accountId: string | null) =>
+    request<{ ok: boolean }>(`/teamviewer/groups/${groupId}/account`, {
+      method: 'PATCH',
+      body: JSON.stringify({ account_id: accountId }),
+    }),
+  teamviewerUndoImport: (sessionId: string) =>
+    request<{ ok: boolean }>(`/teamviewer/sessions/${sessionId}/import`, { method: 'DELETE' }),
   teamviewerStatus: () => request<TeamViewerStatus>('/teamviewer/status'),
   teamviewerSettings: () =>
     request<{ configured: boolean; source: string | null }>('/settings/teamviewer'),
@@ -377,7 +396,12 @@ export const api = {
     }),
   teamviewerEditSession: (
     sessionId: string,
-    payload: { note?: string; duration_seconds?: number; ignored?: boolean },
+    payload: {
+      note?: string
+      duration_seconds?: number
+      ignored?: boolean
+      activity?: string
+    },
   ) =>
     request<{ ok: boolean }>(`/teamviewer/sessions/${sessionId}`, {
       method: 'PATCH',

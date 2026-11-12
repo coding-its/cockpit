@@ -151,6 +151,17 @@ async function save() {
 }
 
 async function remove(entry: TimeEntry) {
+  // Aus TeamViewer übernommene Zeiten sind ein Nachweis: Sie spiegeln eine
+  // protokollierte Verbindung. Rücknahme läuft über den TeamViewer-Reiter.
+  if (entry.source === 'teamviewer') {
+    store.toast(
+      'Dieser Eintrag stammt aus einer TeamViewer-Verbindung. Die Übernahme lässt sich ' +
+        'unter TeamViewer zurücknehmen.',
+      'error',
+    )
+    return
+  }
+
   if (!window.confirm(`Eintrag „${entry.activity}“ wirklich löschen?`)) return
   try {
     await api.deleteTimeEntry(entry.id)
@@ -396,7 +407,21 @@ onUnmounted(() => {
                   </span>
                 </td>
                 <td class="chevron-cell">
-                  <button class="icon-btn icon-btn--danger" aria-label="Eintrag löschen" @click="remove(entry)">
+                  <button
+                    class="icon-btn icon-btn--danger"
+                    :aria-label="
+                      entry.source === 'teamviewer'
+                        ? 'Aus TeamViewer übernommen – nicht löschbar'
+                        : 'Eintrag löschen'
+                    "
+                    :title="
+                      entry.source === 'teamviewer'
+                        ? 'Aus TeamViewer übernommen – Rücknahme im TeamViewer-Reiter'
+                        : 'Eintrag löschen'
+                    "
+                    :disabled="entry.source === 'teamviewer'"
+                    @click="remove(entry)"
+                  >
                     <Trash2 :size="15" />
                   </button>
                 </td>

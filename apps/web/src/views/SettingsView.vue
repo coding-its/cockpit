@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Save,
   Server,
+  Tags,
   UserCog,
 } from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
@@ -16,6 +17,7 @@ import { currency } from '../format'
 import type { BillingSettings } from '../types'
 import UsersView from './UsersView.vue'
 import AccountSettings from '../components/AccountSettings.vue'
+import ActivitySettings from '../components/ActivitySettings.vue'
 import DatabaseSettings from '../components/DatabaseSettings.vue'
 import EnvSettings from '../components/EnvSettings.vue'
 import TeamViewerSettings from '../components/TeamViewerSettings.vue'
@@ -25,11 +27,19 @@ const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 
-type Tab = 'benutzer' | 'abrechnung' | 'konten' | 'datenbank' | 'ninjaone' | 'teamviewer'
+type Tab =
+  | 'benutzer'
+  | 'abrechnung'
+  | 'leistungen'
+  | 'konten'
+  | 'datenbank'
+  | 'ninjaone'
+  | 'teamviewer'
 
 const tabs: Array<{ key: Tab; label: string; icon: typeof UserCog }> = [
   { key: 'benutzer', label: 'Benutzer', icon: UserCog },
   { key: 'abrechnung', label: 'Stundensätze', icon: Calculator },
+  { key: 'leistungen', label: 'Leistungen', icon: Tags },
   { key: 'konten', label: 'Konten', icon: Building2 },
   { key: 'datenbank', label: 'Datenbank', icon: Database },
   { key: 'ninjaone', label: 'NinjaOne', icon: Server },
@@ -40,6 +50,7 @@ const activeTab = computed<Tab>(() => {
   const tab = route.query.tab
   if (
     tab === 'abrechnung' ||
+    tab === 'leistungen' ||
     tab === 'konten' ||
     tab === 'datenbank' ||
     tab === 'ninjaone' ||
@@ -139,6 +150,7 @@ onMounted(loadBilling)
 
     <UsersView v-if="activeTab === 'benutzer'" />
     <AccountSettings v-else-if="activeTab === 'konten'" />
+    <ActivitySettings v-else-if="activeTab === 'leistungen'" />
 
     <DatabaseSettings v-else-if="activeTab === 'datenbank'" />
 

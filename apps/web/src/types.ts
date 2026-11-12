@@ -207,7 +207,7 @@ export interface TimeEntry {
   ended_at: string | null
   duration_seconds: number
   billable: boolean
-  source: 'timer' | 'manual' | 'machine'
+  source: 'timer' | 'manual' | 'machine' | 'teamviewer'
   hourly_rate: number
   /** `null`, solange die Zeit noch nicht abgerechnet ist. */
   billed_at: string | null
@@ -782,6 +782,10 @@ export interface TeamViewerSession {
   effective_note: string | null
   imported_entry_id: string | null
   ignored: boolean
+  /** Gewählte Leistungsart; `null` heißt: Vorgabe. */
+  activity: string | null
+  /** Leistungsart, die beim Übernehmen gilt. */
+  effective_activity: string
   unusual: boolean
 }
 
@@ -790,4 +794,41 @@ export interface TeamViewerStatus {
   sessions: number
   groups: number
   last_sync: string | null
+}
+
+/** Leistungsart (Kategorie) für Zeiteinträge. */
+export interface ActivityKind {
+  id: string
+  name: string
+  position: number
+  active: boolean
+}
+
+/** Auswahlmöglichkeit in der Kontenverwaltung. */
+export interface AssignmentTarget {
+  id: string
+  name: string
+  /** Kürzel des Kontos, dem der Datensatz schon gehört. */
+  taken_by: string | null
+}
+
+export interface AccountAssignmentRow {
+  account_id: string
+  code: string
+  name: string
+  active: boolean
+  customer_id: string | null
+  customer_name: string | null
+  web_client_id: string | null
+  web_client_name: string | null
+  teamviewer_groups: Array<{ group_id: string; name: string }>
+}
+
+export interface AccountOverview {
+  accounts: AccountAssignmentRow[]
+  customers: AssignmentTarget[]
+  web_clients: AssignmentTarget[]
+  teamviewer_groups: AssignmentTarget[]
+  unassigned_customers: number
+  unassigned_teamviewer: number
 }

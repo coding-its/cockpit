@@ -11,13 +11,18 @@ import {
 } from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
 import Modal from '../components/Modal.vue'
-import type { CustomerSummary, TeamViewerGroup, TeamViewerSession, WebClientSummary } from '../types'
+import type {
+  ActivityKind,
+  CustomerSummary,
+  TeamViewerGroup,
+  TeamViewerSession,
+  WebClientSummary,
+} from '../types'
 import {
+  currency,
   currentMonth,
   formatDateTime,
-  formatDuration,
   formatDurationCompact,
-  currency,
   monthLabel,
   shiftMonth,
 } from '../format'
@@ -27,6 +32,7 @@ const groups = ref<TeamViewerGroup[]>([])
 const sessions = ref<TeamViewerSession[]>([])
 const customers = ref<CustomerSummary[]>([])
 const webClients = ref<WebClientSummary[]>([])
+const activities = ref<ActivityKind[]>([])
 const loading = ref(true)
 const syncing = ref(false)
 const error = ref('')
@@ -35,6 +41,28 @@ const configured = ref<boolean | null>(null)
 const lastSync = ref<string | null>(null)
 const busyGroup = ref<string | null>(null)
 const openGroup = ref<string | null>(null)
+
+/**
+ * Ausstehende Speicherungen.
+ *
+ * Wichtig wegen eines echten Fehlers: Wer die Dauer ändert und sofort
+ * „Übernehmen“ drückt, war schneller als der Schreibvorgang – der Import las
+ * dann noch die alte Zeit. Vor dem Übernehmen wird deshalb darauf gewartet.
+ */
+const pending = new Set<Promise<unknown>>()
+
+function track<T>(work: Promise<T>): Promise<T> {
+  const tracked = work.finally(() => {
+    pending.delete(tracked as unknown as Promise<unknown>)
+  })
+  pending.add(tracked as unknown as Promise<unknown>)
+  return tracked
+}
+
+async function flushPending() {
+  if (!pending.size) return
+  await Promise.allSettled([...pending])
+}
 
 /** Ziele für die Zuordnung: Kunden und Web-Kunden in einer Liste. */
 const targets = computed(() => [
@@ -50,37 +78,27 @@ const targets = computed(() => [
   })),
 ])
 
-const open = computed(() =>
+const unassigned = computed(() =>
   groups.value.filter((group) => group.customer_id === null && group.web_client_id === null),
 )
 
 const summary = computed(() => ({
-  // Über die Sitzungsliste zählen, nicht über die Gruppen: Sitzungen ohne
-  // Gruppe (Ad-hoc-Kunden) gehören in die Summe, tauchen aber in keiner
-  // Gruppenzeile auf.
   seconds: sessions.value.reduce((sum, session) => sum + session.duration_seconds, 0),
   openSeconds: sessions.value
-    .filter((session) => !session.imported_entry_id)
-    .reduce((sum, session) => sum + session.duration_seconds, 0),
+    .filter((session) => !session.imported_entry_id && !session.ignored)
+    .reduce((sum, session) => sum + session.effective_seconds, 0),
   sessions: sessions.value.length,
-  // Summe der Beträge, die TeamViewer selbst errechnet hat – zum Vergleich.
   fee: sessions.value.reduce((sum, session) => sum + session.fee, 0),
 }))
 
-const summaryFee = computed(() => summary.value.fee)
-
 const shownSessions = computed(() =>
-  openGroup.value
-    ? sessions.value.filter((session) => session.group_id === openGroup.value)
-    : [],
+  openGroup.value ? sessions.value.filter((session) => session.group_id === openGroup.value) : [],
 )
 
-/** Die Gruppe, deren Sitzungen gerade im Dialog stehen. */
-const currentGroup = computed(() =>
-  groups.value.find((group) => group.group_id === openGroup.value) ?? null,
+const currentGroup = computed(
+  () => groups.value.find((group) => group.group_id === openGroup.value) ?? null,
 )
 
-/** Zeit, die beim Übernehmen entstehen würde – ohne ignorierte und übernommene. */
 const windowSeconds = computed(() =>
   shownSessions.value
     .filter((session) => !session.ignored && !session.imported_entry_id)
@@ -92,118 +110,25 @@ const windowCount = computed(
     shownSessions.value.filter((session) => !session.ignored && !session.imported_entry_id).length,
 )
 
-function closeSessions() {
-  openGroup.value = null
-}
-
-/** Minuten für das Eingabefeld – auf ganze Minuten gerundet. */
-function minutesOf(session: { effective_seconds: number }): number {
-  return Math.round(session.effective_seconds / 60)
-}
-
-async function reloadSessions() {
-  sessions.value = await api.teamviewerSessions(month.value)
-}
-
-/**
- * Notiz speichern. Nur senden, wenn sich etwas geändert hat – sonst entstehen
- * bei jedem Verlassen des Feldes überflüssige Schreibvorgänge.
- */
-async function saveNote(session: TeamViewerSession, value: string) {
-  const next = value.trim()
-  if (next === (session.effective_note ?? '')) return
-
-  try {
-    await api.teamviewerEditSession(session.id, { note: next })
-    await reloadSessions()
-    await refreshGroups()
-  } catch (caught) {
-    error.value = errorMessage(caught)
-    await reloadSessions()
-  }
-}
-
-async function resetNote(session: TeamViewerSession) {
-  try {
-    await api.teamviewerEditSession(session.id, { note: '' })
-    await reloadSessions()
-  } catch (caught) {
-    error.value = errorMessage(caught)
-  }
-}
-
-/**
- * Dauer in Minuten setzen. `0` heißt: zurück auf die Verbindungsdauer.
- * Die Originalzeit bleibt gespeichert und wird im Feld darunter gezeigt.
- */
-async function saveDuration(session: TeamViewerSession, raw: string) {
-  const minutes = Number.parseInt(raw, 10)
-  if (Number.isNaN(minutes) || minutes < 0) {
-    await reloadSessions()
-    return
-  }
-
-  const seconds = minutes * 60
-  if (seconds === (session.duration_override_seconds ?? 0) && session.duration_override_seconds !== null) {
-    return
-  }
-  if (session.duration_override_seconds === null && seconds === session.duration_seconds) return
-
-  try {
-    await api.teamviewerEditSession(session.id, { duration_seconds: seconds })
-    await reloadSessions()
-    await refreshGroups()
-  } catch (caught) {
-    error.value = errorMessage(caught)
-    await reloadSessions()
-  }
-}
-
-async function resetDuration(session: TeamViewerSession) {
-  try {
-    await api.teamviewerEditSession(session.id, { duration_seconds: 0 })
-    await reloadSessions()
-    await refreshGroups()
-  } catch (caught) {
-    error.value = errorMessage(caught)
-  }
-}
-
-/** Sitzung ausblenden (Duplikat) oder zurückholen. */
-async function toggleIgnored(session: TeamViewerSession) {
-  try {
-    await api.teamviewerEditSession(session.id, { ignored: !session.ignored })
-    await reloadSessions()
-    await refreshGroups()
-  } catch (caught) {
-    error.value = errorMessage(caught)
-  }
-}
-
-/** Gruppenzahlen nachziehen, ohne die ganze Seite neu zu bauen. */
-async function refreshGroups() {
-  try {
-    groups.value = await api.teamviewerGroups(month.value)
-  } catch {
-    // Die Sitzungsliste ist wichtiger; der nächste Abruf zieht die Zahlen nach.
-  }
-}
-
 async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [groupList, sessionList, customerList, clientList, status] = await Promise.all([
-      api.teamviewerGroups(month.value),
-      api.teamviewerSessions(month.value),
-      api.customers(),
-      api.webClients(),
-      api.teamviewerStatus(),
-    ])
+    const [groupList, sessionList, customerList, clientList, status, activityList] =
+      await Promise.all([
+        api.teamviewerGroups(month.value),
+        api.teamviewerSessions(month.value),
+        api.customers(),
+        api.webClients(),
+        api.teamviewerStatus(),
+        api.activities().catch(() => [] as ActivityKind[]),
+      ])
+
     groups.value = groupList
     sessions.value = sessionList
     customers.value = customerList
     webClients.value = clientList
+    activities.value = activityList
     configured.value = status.configured
     lastSync.value = status.last_sync
   } catch (caught) {
@@ -280,7 +205,11 @@ async function importSessions(group: TeamViewerGroup) {
   if (!count) return
 
   const long = sessions.value.filter(
-    (session) => session.group_id === group.group_id && session.unusual && !session.imported_entry_id,
+    (session) =>
+      session.group_id === group.group_id &&
+      session.unusual &&
+      !session.imported_entry_id &&
+      !session.ignored,
   )
 
   let hint = ''
@@ -292,7 +221,7 @@ async function importSessions(group: TeamViewerGroup) {
 
   if (
     !window.confirm(
-      `${count} offene Verbindung(en) von „${group.name}" als abrechenbare Zeiteinträge übernehmen?${hint}`,
+      `${count} offene Verbindung(en) von „${group.name}“ als abrechenbare Zeiteinträge übernehmen?${hint}`,
     )
   ) {
     return
@@ -302,6 +231,9 @@ async function importSessions(group: TeamViewerGroup) {
   error.value = ''
   notice.value = ''
   try {
+    // Erst schreiben, dann importieren: Sonst übernimmt der Import die
+    // Verbindungsdauer statt der gerade geänderten.
+    await flushPending()
     const report = await api.teamviewerImport(group.group_id, month.value, true)
     notice.value = report.message
     await load()
@@ -314,6 +246,161 @@ async function importSessions(group: TeamViewerGroup) {
 
 function toggleSessions(group: TeamViewerGroup) {
   openGroup.value = openGroup.value === group.group_id ? null : group.group_id
+}
+
+function closeSessions() {
+  openGroup.value = null
+}
+
+/** Minuten für das Eingabefeld – auf ganze Minuten gerundet. */
+function minutesOf(session: { effective_seconds: number }): number {
+  return Math.round(session.effective_seconds / 60)
+}
+
+async function reloadSessions() {
+  sessions.value = await api.teamviewerSessions(month.value)
+}
+
+/** Gruppenzahlen nachziehen, ohne die ganze Seite neu zu bauen. */
+async function refreshGroups() {
+  try {
+    groups.value = await api.teamviewerGroups(month.value)
+  } catch {
+    // Die Sitzungsliste ist wichtiger; der nächste Abruf zieht die Zahlen nach.
+  }
+}
+
+/**
+ * Notiz speichern. Nur senden, wenn sich etwas geändert hat – sonst entstehen
+ * bei jedem Verlassen des Feldes überflüssige Schreibvorgänge.
+ */
+function saveNote(session: TeamViewerSession, value: string) {
+  const next = value.trim()
+  if (next === (session.effective_note ?? '')) return Promise.resolve()
+
+  return track(
+    (async () => {
+      try {
+        await api.teamviewerEditSession(session.id, { note: next })
+        await reloadSessions()
+        await refreshGroups()
+      } catch (caught) {
+        error.value = errorMessage(caught)
+        await reloadSessions()
+      }
+    })(),
+  )
+}
+
+function resetNote(session: TeamViewerSession) {
+  return track(
+    (async () => {
+      try {
+        await api.teamviewerEditSession(session.id, { note: '' })
+        await reloadSessions()
+      } catch (caught) {
+        error.value = errorMessage(caught)
+      }
+    })(),
+  )
+}
+
+/**
+ * Dauer in Minuten setzen. `0` heißt: zurück auf die Verbindungsdauer.
+ * Die Originalzeit bleibt gespeichert und wird unter dem Feld gezeigt.
+ */
+function saveDuration(session: TeamViewerSession, raw: string) {
+  const minutes = Number.parseInt(raw, 10)
+  if (Number.isNaN(minutes) || minutes < 0) {
+    void reloadSessions()
+    return Promise.resolve()
+  }
+
+  const seconds = minutes * 60
+  const current = session.duration_override_seconds
+  if (current !== null && seconds === current) return Promise.resolve()
+  if (current === null && seconds === session.duration_seconds) return Promise.resolve()
+
+  return track(
+    (async () => {
+      try {
+        await api.teamviewerEditSession(session.id, { duration_seconds: seconds })
+        await reloadSessions()
+        await refreshGroups()
+      } catch (caught) {
+        error.value = errorMessage(caught)
+        await reloadSessions()
+      }
+    })(),
+  )
+}
+
+function resetDuration(session: TeamViewerSession) {
+  return track(
+    (async () => {
+      try {
+        await api.teamviewerEditSession(session.id, { duration_seconds: 0 })
+        await reloadSessions()
+        await refreshGroups()
+      } catch (caught) {
+        error.value = errorMessage(caught)
+      }
+    })(),
+  )
+}
+
+/** Leistungsart setzen. */
+function saveActivity(session: TeamViewerSession, value: string) {
+  if (value === (session.effective_activity ?? '')) return Promise.resolve()
+
+  return track(
+    (async () => {
+      try {
+        await api.teamviewerEditSession(session.id, { activity: value })
+        await reloadSessions()
+      } catch (caught) {
+        error.value = errorMessage(caught)
+        await reloadSessions()
+      }
+    })(),
+  )
+}
+
+/** Sitzung ausblenden (Duplikat) oder zurückholen. */
+function toggleIgnored(session: TeamViewerSession) {
+  return track(
+    (async () => {
+      try {
+        await api.teamviewerEditSession(session.id, { ignored: !session.ignored })
+        await reloadSessions()
+        await refreshGroups()
+      } catch (caught) {
+        error.value = errorMessage(caught)
+      }
+    })(),
+  )
+}
+
+/**
+ * Übernahme zurücknehmen – der Weg zurück, weil aus TeamViewer übernommene
+ * Zeiten nicht gelöscht werden dürfen.
+ */
+async function undoImport(session: TeamViewerSession) {
+  if (
+    !window.confirm(
+      'Übernahme zurücknehmen? Der Zeiteintrag wird entfernt, die Verbindung ist danach wieder bearbeitbar.',
+    )
+  ) {
+    return
+  }
+
+  try {
+    await api.teamviewerUndoImport(session.id)
+    await reloadSessions()
+    await refreshGroups()
+  } catch (caught) {
+    error.value = errorMessage(caught)
+  }
 }
 
 watch(month, load)
@@ -355,11 +442,8 @@ onMounted(load)
       <ShieldAlert :size="26" />
       <h2>Kein TeamViewer-Zugang hinterlegt</h2>
       <p>
-        Erwartet wird ein Script-Token aus dem TeamViewer Management Console mit der
-        Berechtigung <strong>Verbindungsprotokollierung → Verbindungsprotokolle lesen</strong>
-        (und <strong>Computer &amp; Kontakte → Einträge anzeigen</strong>). Ablage in
-        <code>data/teamviewer-token.txt</code> oder in
-        <code>%APPDATA%\Wartungscockpit\teamviewer-token.txt</code>.
+        Der Script-Token wird unter <strong>Einstellungen → TeamViewer</strong> hinterlegt
+        (nur Administratoren).
       </p>
     </section>
 
@@ -375,14 +459,16 @@ onMounted(load)
           <strong>{{ formatDurationCompact(summary.openSeconds) }}</strong>
           <small>nicht als Zeiteintrag übernommen</small>
         </article>
-        <article class="metric-card" :class="{ 'metric-card--accent': open.length > 0 }">
+        <article class="metric-card" :class="{ 'metric-card--accent': unassigned.length > 0 }">
           <p>Ohne Zuordnung</p>
-          <strong>{{ open.length }}</strong>
-          <small>{{ open.length ? 'Gruppen brauchen einen Kunden' : 'alle Gruppen zugeordnet' }}</small>
+          <strong>{{ unassigned.length }}</strong>
+          <small>{{
+            unassigned.length ? 'Gruppen brauchen einen Kunden' : 'alle Gruppen zugeordnet'
+          }}</small>
         </article>
         <article class="metric-card">
           <p>TeamViewer rechnet</p>
-          <strong>{{ currency(summaryFee) }}</strong>
+          <strong>{{ currency(summary.fee) }}</strong>
           <small>eigene Berechnung im TeamViewer-Konto</small>
         </article>
       </section>
@@ -392,8 +478,8 @@ onMounted(load)
           <div>
             <h2>Kundengruppen</h2>
             <p>
-              TeamViewer führt eigene Kundennamen. Ordne jede Gruppe einem Kunden zu – dann
-              zählen ihre Zeiten in dessen Abrechnung.
+              Klick auf den Namen zeigt die Verbindungen. Zuordnen lässt sich auch gesammelt unter
+              <strong>Einstellungen → Konten</strong>.
             </p>
           </div>
           <span class="count-pill">{{ groups.length }}</span>
@@ -425,19 +511,11 @@ onMounted(load)
                 <td>
                   <button
                     class="link-button"
-                    :title="
-                      openGroup === group.group_id
-                        ? 'Sitzungen schließen'
-                        : `${group.sessions} Sitzungen anzeigen`
-                    "
+                    :title="`${group.sessions} Sitzungen anzeigen`"
                     @click="toggleSessions(group)"
                   >
                     {{ group.name }}
-                    <ChevronRight
-                      :size="13"
-                      class="tv-chevron"
-                      :class="{ 'is-open': openGroup === group.group_id }"
-                    />
+                    <ChevronRight :size="13" class="tv-chevron" />
                   </button>
                   <small class="tv-account">
                     {{ group.sessions }} Sitzungen ansehen
@@ -452,9 +530,17 @@ onMounted(load)
                     @change="assign(group, ($event.target as HTMLSelectElement).value)"
                   >
                     <option value="">
-                      {{ group.suggested_name ? `– Vorschlag: ${group.suggested_name} –` : '– nicht zugeordnet –' }}
+                      {{
+                        group.suggested_name
+                          ? `– Vorschlag: ${group.suggested_name} –`
+                          : '– nicht zugeordnet –'
+                      }}
                     </option>
-                    <option v-for="target in targets" :key="target.id" :value="`${target.kind}:${target.id}`">
+                    <option
+                      v-for="target in targets"
+                      :key="target.id"
+                      :value="`${target.kind}:${target.id}`"
+                    >
                       {{ target.label }}
                     </option>
                   </select>
@@ -470,8 +556,11 @@ onMounted(load)
                 <td class="row-actions">
                   <button
                     class="btn btn-ghost btn--sm"
-                    :disabled="busyGroup === group.group_id || !group.open_sessions ||
-                      (!group.customer_id && !group.web_client_id)"
+                    :disabled="
+                      busyGroup === group.group_id ||
+                      !group.open_sessions ||
+                      (!group.customer_id && !group.web_client_id)
+                    "
                     :title="
                       !group.customer_id && !group.web_client_id
                         ? 'Erst einem Kunden zuordnen'
@@ -491,7 +580,6 @@ onMounted(load)
           </table>
         </div>
       </section>
-
     </template>
 
     <Modal
@@ -502,9 +590,9 @@ onMounted(load)
       @close="closeSessions"
     >
       <p class="tv-modal-hint">
-        Dauer und Kommentar lassen sich hier anpassen – die Originalzeit von TeamViewer bleibt
-        erhalten. Das <strong>×</strong> blendet eine Sitzung aus, etwa wenn ein Arbeitsvorgang
-        auf zwei Rechnern protokolliert wurde.
+        Dauer, Leistungsart und Kommentar lassen sich anpassen – die Originalzeit von TeamViewer
+        bleibt erhalten. Das <strong>×</strong> blendet eine Sitzung aus, etwa wenn ein
+        Arbeitsvorgang auf zwei Rechnern protokolliert wurde.
       </p>
 
       <div v-if="!shownSessions.length" class="empty-state empty-state--compact">
@@ -521,14 +609,18 @@ onMounted(load)
           <header class="tv-session-head">
             <div class="tv-session-meta">
               <strong>{{ formatDateTime(session.started_at) }}</strong>
-              <span class="tv-session-device">{{ session.device_name ?? 'ohne Gerätenamen' }}</span>
+              <span class="tv-session-device">{{
+                session.device_name ?? 'ohne Gerätenamen'
+              }}</span>
               <span class="tv-session-user">{{ session.user_name ?? '–' }}</span>
             </div>
             <div class="tv-session-badges">
               <span v-if="session.imported_entry_id" class="status-pill status-pill--ok">
                 übernommen
               </span>
-              <span v-else-if="session.ignored" class="status-pill status-pill--muted">ausgeblendet</span>
+              <span v-else-if="session.ignored" class="status-pill status-pill--muted">
+                ausgeblendet
+              </span>
               <span v-else-if="session.unusual" class="status-pill status-pill--warning">
                 auffällig lang
               </span>
@@ -566,32 +658,53 @@ onMounted(load)
                 @change="saveDuration(session, ($event.target as HTMLInputElement).value)"
               />
               <small v-if="session.duration_override_seconds !== null" class="field-hint">
-                Original: {{ formatDurationCompact(session.duration_seconds) }}
-                <button class="link-inline" @click="resetDuration(session)">zurücksetzen</button>
+                Original {{ formatDurationCompact(session.duration_seconds) }}
+                <button type="button" class="link-inline" @click="resetDuration(session)">
+                  zurücksetzen
+                </button>
               </small>
-              <small v-else class="field-hint">Verbindungsdauer</small>
             </label>
 
-            <label class="field tv-note">
-              <span>Kommentar</span>
-              <input
-                type="text"
-                :value="session.effective_note ?? ''"
-                :placeholder="session.notes ? session.notes : 'Kommentar …'"
+            <label class="field tv-activity">
+              <span>Leistungsart</span>
+              <select
+                :value="session.effective_activity"
                 :disabled="!!session.imported_entry_id || session.ignored"
-                @blur="saveNote(session, ($event.target as HTMLInputElement).value)"
-                @keyup.enter="($event.target as HTMLInputElement).blur()"
-              />
-              <small v-if="session.note_edit !== null" class="field-hint">
-                TeamViewer-Original: {{ session.notes || '–' }}
-                <button class="link-inline" @click="resetNote(session)">zurücksetzen</button>
-              </small>
-              <small v-else-if="session.notes" class="field-hint">
-                Vorlage aus TeamViewer – überschreiben oder ergänzen
-              </small>
-              <small v-else class="field-hint">keine Notiz in TeamViewer</small>
+                @change="saveActivity(session, ($event.target as HTMLSelectElement).value)"
+              >
+                <option v-for="kind in activities" :key="kind.id" :value="kind.name">
+                  {{ kind.name }}
+                </option>
+              </select>
             </label>
           </div>
+
+          <label class="field tv-note">
+            <span>Kommentar</span>
+            <textarea
+              rows="3"
+              :value="session.effective_note ?? ''"
+              :placeholder="session.notes ?? 'Kommentar …'"
+              :disabled="!!session.imported_entry_id || session.ignored"
+              @blur="saveNote(session, ($event.target as HTMLTextAreaElement).value)"
+            />
+            <small v-if="session.note_edit !== null" class="field-hint">
+              TeamViewer-Original: {{ session.notes || '–' }}
+              <button type="button" class="link-inline" @click="resetNote(session)">
+                zurücksetzen
+              </button>
+            </small>
+            <small v-else-if="session.notes" class="field-hint">
+              Vorlage aus TeamViewer – überschreiben oder ergänzen
+            </small>
+          </label>
+
+          <p v-if="session.imported_entry_id" class="tv-session-imported">
+            Als Zeiteintrag übernommen.
+            <button type="button" class="link-inline" @click="undoImport(session)">
+              Übernahme zurücknehmen
+            </button>
+          </p>
         </article>
       </div>
 

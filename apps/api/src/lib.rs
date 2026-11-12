@@ -7,6 +7,7 @@
 //! denselben Audit-Trail.
 
 mod accounts;
+mod activities;
 mod auth;
 mod billing;
 mod config;

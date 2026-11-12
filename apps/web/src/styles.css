@@ -5445,3 +5445,165 @@ a.demo-card.demo-card--live:hover {
   font-size: 12.6px;
   font-variant-numeric: tabular-nums;
 }
+
+/* Verbindungsdialog: Dauer und Leistungsart nebeneinander, Kommentar darunter */
+
+.tv-session-fields {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 10px;
+}
+
+.tv-duration {
+  flex: 0 0 120px;
+}
+
+.tv-activity {
+  flex: 1;
+  min-width: 0;
+}
+
+.tv-session-fields .field > input,
+.tv-session-fields .field > select {
+  width: 100%;
+}
+
+.tv-session > .tv-note {
+  margin-top: 10px;
+}
+
+.tv-session .tv-note textarea {
+  width: 100%;
+  resize: vertical;
+  min-height: 62px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 12.8px;
+  line-height: 1.45;
+}
+
+.tv-session .tv-note textarea:disabled,
+.tv-session .field input:disabled,
+.tv-session .field select:disabled {
+  background: #f9fafb;
+  color: var(--muted);
+}
+
+.tv-session-imported {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12.2px;
+}
+
+/* Kontenverwaltung */
+
+.accounts-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-row {
+  display: grid;
+  grid-template-columns: 90px minmax(160px, 1.2fr) minmax(160px, 1fr) minmax(160px, 1fr) 40px;
+  gap: 10px;
+  align-items: start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.account-row .account-code {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+}
+
+.account-row .field > span {
+  font-size: 11px;
+}
+
+.account-teams {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: -2px;
+}
+
+.account-teams .status-pill {
+  font-size: 11px;
+}
+
+.account-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+@media (max-width: 980px) {
+  .account-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .account-teams {
+    grid-column: 1 / -1;
+  }
+
+  .tv-session-fields {
+    flex-direction: column;
+  }
+
+  .tv-duration {
+    flex: 1 1 auto;
+    width: 100%;
+  }
+}
+
+/* Leistungsarten verwalten */
+
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 2px;
+  border-bottom: 1px solid #f2f4f7;
+}
+
+.activity-row:last-child {
+  border-bottom: none;
+}
+
+.activity-row.is-inactive .activity-name {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
+.activity-name {
+  flex: 1;
+  font-size: 13.2px;
+}
+
+.activity-inactive {
+  margin-top: 14px;
+}
+
+.activity-inactive summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12.4px;
+}

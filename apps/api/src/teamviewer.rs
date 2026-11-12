@@ -26,6 +26,9 @@ const API: &str = "https://webapi.teamviewer.com/api/v1";
 /// Grenze, ab der eine Sitzung als ungewöhnlich gilt (vier Stunden).
 const UNUSUAL_SECONDS: i64 = 4 * 3600;
 
+/// Vorgabe für die Leistungsart einer Verbindung.
+const DEFAULT_ACTIVITY: &str = crate::activities::DEFAULT_ACTIVITY;
+
 /// Zugangstoken: erst Umgebung, dann Datei.
 ///
 /// Die Datei ist der praktische Weg – der Token wird im Management Console
@@ -460,6 +463,10 @@ pub struct SessionRow {
     pub effective_note: Option<String>,
     pub imported_entry_id: Option<String>,
     pub ignored: bool,
+    /// Gewählte Leistungsart; `NULL` heißt: Vorgabe des Imports.
+    pub activity: Option<String>,
+    /// Leistungsart, die beim Übernehmen gilt.
+    pub effective_activity: String,
     /// Übergroße Sitzung – meist ein vergessener Logout.
     pub unusual: bool,
 }
@@ -570,6 +577,8 @@ pub async fn sessions(
             COALESCE(NULLIF(note_edit, ''), notes) AS effective_note,
             imported_entry_id,
             ignored,
+            activity,
+            COALESCE(NULLIF(activity, ''), $4) AS effective_activity,
             (COALESCE(duration_override_seconds, duration_seconds) >= $3) AS unusual
         FROM teamviewer_sessions
         WHERE substr(started_at, 1, 7) = $1
@@ -580,6 +589,7 @@ pub async fn sessions(
     .bind(month)
     .bind(group_id)
     .bind(UNUSUAL_SECONDS)
+    .bind(DEFAULT_ACTIVITY)
     .fetch_all(pool)
     .await
 }
@@ -663,6 +673,7 @@ pub async fn edit_session(
     note: Option<&str>,
     duration_seconds: Option<i64>,
     ignored: Option<bool>,
+    activity: Option<&str>,
 ) -> Result<(), String> {
     let existing: Option<Option<String>> =
         sqlx::query_scalar("SELECT imported_entry_id FROM teamviewer_sessions WHERE id = $1")
@@ -721,6 +732,30 @@ pub async fn edit_session(
             .map_err(|error| error.to_string())?;
     }
 
+    if let Some(activity) = activity {
+        // Nur bekannte Leistungsarten übernehmen – sonst entstehen Tippfehler
+        // als Kategorien, und die Auswertung hat wieder freien Text.
+        let trimmed = activity.trim();
+        let value = if trimmed.is_empty() {
+            None
+        } else {
+            let canonical = crate::activities::canonical(pool, trimmed)
+                .await
+                .map_err(|error| error.to_string())?;
+
+            Some(canonical.ok_or_else(|| {
+                format!("„{trimmed}“ ist keine hinterlegte Leistungsart.")
+            })?)
+        };
+
+        sqlx::query("UPDATE teamviewer_sessions SET activity = $1 WHERE id = $2")
+            .bind(&value)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+
     if let Some(ignored) = ignored {
         sqlx::query("UPDATE teamviewer_sessions SET ignored = $1 WHERE id = $2")
             .bind(ignored)
@@ -729,6 +764,62 @@ pub async fn edit_session(
             .await
             .map_err(|error| error.to_string())?;
     }
+
+    Ok(())
+}
+
+/// Nimmt die Übernahme einer Verbindung zurück.
+///
+/// Löscht den daraus entstandenen Zeiteintrag und macht die Verbindung wieder
+/// bearbeitbar – der Weg zurück, weil aus TeamViewer übernommene Zeiten nicht
+/// gelöscht werden dürfen.
+///
+/// Bereits abgerechnete Einträge bleiben: Eine Rechnung, die draußen ist, lässt
+/// sich nicht durch Löschen korrigieren.
+pub async fn undo_import(pool: &PgPool, session_id: &str) -> Result<(), String> {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT imported_entry_id FROM teamviewer_sessions WHERE id = $1")
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+
+    let Some((entry_id,)) = row else {
+        return Err(format!("Verbindung {session_id} nicht gefunden"));
+    };
+
+    let Some(entry_id) = entry_id else {
+        return Ok(());
+    };
+
+    let billed: Option<Option<String>> =
+        sqlx::query_scalar("SELECT billed_at FROM time_entries WHERE id = $1")
+            .bind(&entry_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+
+    match billed {
+        Some(Some(_)) => {
+            return Err(
+                "Dieser Zeiteintrag ist bereits abgerechnet. Eine ausgestellte Rechnung lässt                  sich nicht durch Löschen berichtigen – bitte über eine Gutschrift."
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    sqlx::query("DELETE FROM time_entries WHERE id = $1")
+        .bind(&entry_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    sqlx::query("UPDATE teamviewer_sessions SET imported_entry_id = NULL WHERE id = $1")
+        .bind(session_id)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
 
     Ok(())
 }
@@ -773,11 +864,19 @@ pub async fn import_sessions(
 
     // Korrigierte Dauer und nachgearbeitete Notiz haben Vorrang; ignorierte
     // Sitzungen (Duplikate, Fehlklicks) bleiben draußen.
-    let open: Vec<(String, String, Option<String>, Option<String>, i64, Option<String>)> =
-        sqlx::query_as(
+    let open: Vec<(
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        i64,
+        Option<String>,
+        String,
+    )> = sqlx::query_as(
             "SELECT id, started_at, ended_at, user_name,
                     COALESCE(duration_override_seconds, duration_seconds),
-                    COALESCE(NULLIF(note_edit, ''), notes)
+                    COALESCE(NULLIF(note_edit, ''), notes),
+                    COALESCE(NULLIF(activity, ''), $3)
              FROM teamviewer_sessions
              WHERE group_id = $1 AND substr(started_at, 1, 7) = $2
                AND imported_entry_id IS NULL AND ignored = false
@@ -785,6 +884,7 @@ pub async fn import_sessions(
         )
         .bind(group_id)
         .bind(month)
+        .bind(DEFAULT_ACTIVITY)
         .fetch_all(pool)
         .await
         .map_err(|error| error.to_string())?;
@@ -793,7 +893,7 @@ pub async fn import_sessions(
     let total = open.len() as u64;
     let now = now_iso();
 
-    for (session_id, started_at, ended_at, user_name, seconds, notes) in open {
+    for (session_id, started_at, ended_at, user_name, seconds, notes, activity) in open {
         if seconds <= 0 {
             continue;
         }
@@ -811,12 +911,13 @@ pub async fn import_sessions(
             "INSERT INTO time_entries
                 (id, customer_id, web_client_id, user_name, activity, note,
                  started_at, ended_at, duration_seconds, billable, source, created_at)
-             VALUES ($1, $2, $3, $4, 'Fernwartung', $5, $6, $7, $8, $9, 'teamviewer', $10)",
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'teamviewer', $11)",
         )
         .bind(&entry_id)
         .bind(&customer_id)
         .bind(&web_client_id)
         .bind(user_name.as_deref().unwrap_or("TeamViewer"))
+        .bind(&activity)
         .bind(&note)
         .bind(&started_at)
         .bind(&ended_at)
@@ -891,7 +992,7 @@ fn matches(a: &str, b: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        edit_session, groups, import_sessions, matches, normalize, parse_time, sessions,
+        edit_session, groups, import_sessions, matches, normalize, parse_time, sessions, undo_import,
         single_line,
     };
 
@@ -951,8 +1052,7 @@ mod tests {
         let (_guard, pool) = crate::testdb::fixture().await;
         seed_session(&pool, "s1", 600).await;
 
-        edit_session(&pool, "s1", Some("Anruf dazwischen"), None, None)
-            .await
+        edit_session(&pool, "s1", Some("Anruf dazwischen"), None, None, None).await
             .unwrap();
 
         let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
@@ -966,10 +1066,9 @@ mod tests {
         let (_guard, pool) = crate::testdb::fixture().await;
         seed_session(&pool, "s1", 600).await;
 
-        edit_session(&pool, "s1", Some("eigener Text"), None, None)
-            .await
+        edit_session(&pool, "s1", Some("eigener Text"), None, None, None).await
             .unwrap();
-        edit_session(&pool, "s1", Some("   "), None, None).await.unwrap();
+        edit_session(&pool, "s1", Some("   "), None, None, None).await.unwrap();
 
         let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
         assert_eq!(rows[0].effective_note.as_deref(), Some("Original-Notiz"));
@@ -982,7 +1081,7 @@ mod tests {
         // 22 Stunden offen – vergessener Logout.
         seed_session(&pool, "s1", 22 * 3600).await;
 
-        edit_session(&pool, "s1", None, Some(45 * 60), None)
+        edit_session(&pool, "s1", None, Some(45 * 60), None, None)
             .await
             .unwrap();
 
@@ -997,8 +1096,8 @@ mod tests {
         let (_guard, pool) = crate::testdb::fixture().await;
         seed_session(&pool, "s1", 600).await;
 
-        edit_session(&pool, "s1", None, Some(60), None).await.unwrap();
-        edit_session(&pool, "s1", None, Some(0), None).await.unwrap();
+        edit_session(&pool, "s1", None, Some(60), None, None).await.unwrap();
+        edit_session(&pool, "s1", None, Some(0), None, None).await.unwrap();
 
         let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
         assert_eq!(rows[0].effective_seconds, 600);
@@ -1010,18 +1109,152 @@ mod tests {
         let (_guard, pool) = crate::testdb::fixture().await;
         seed_session(&pool, "s1", 600).await;
 
-        assert!(edit_session(&pool, "s1", None, Some(30 * 3600), None)
+        assert!(edit_session(&pool, "s1", None, Some(30 * 3600), None, None)
             .await
             .is_err());
     }
 
+
+
+    #[tokio::test]
+    async fn an_imported_entry_cannot_be_deleted_directly() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, '2026-11-01T00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_session(&pool, "s1", 600).await;
+        sqlx::query("UPDATE teamviewer_groups SET customer_id = 'c1' WHERE group_id = 'g1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
+
+        let source: String = sqlx::query_scalar("SELECT source FROM time_entries LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(source, "teamviewer");
+    }
+
+    #[tokio::test]
+    async fn undo_brings_the_entry_back_to_editable() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, '2026-11-01T00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_session(&pool, "s1", 600).await;
+        sqlx::query("UPDATE teamviewer_groups SET customer_id = 'c1' WHERE group_id = 'g1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
+
+        undo_import(&pool, "s1").await.unwrap();
+
+        let entries: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM time_entries")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(entries, 0, "der Zeiteintrag wird entfernt");
+
+        // Und die Verbindung ist wieder bearbeitbar.
+        edit_session(&pool, "s1", Some("nachgetragen"), None, None, None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_already_billed_entry_cannot_be_undone() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, '2026-11-01T00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_session(&pool, "s1", 600).await;
+        sqlx::query("UPDATE teamviewer_groups SET customer_id = 'c1' WHERE group_id = 'g1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
+
+        sqlx::query("UPDATE time_entries SET billed_at = '2026-11-30T00:00:00'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let error = undo_import(&pool, "s1").await.unwrap_err();
+        assert!(error.contains("abgerechnet"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn a_session_takes_the_chosen_activity() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, '2026-11-01T00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_session(&pool, "s1", 600).await;
+        sqlx::query("UPDATE teamviewer_groups SET customer_id = 'c1' WHERE group_id = 'g1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        edit_session(&pool, "s1", None, None, None, Some("Vor-Ort-Service"))
+            .await
+            .unwrap();
+
+        let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
+        assert_eq!(rows[0].effective_activity, "Vor-Ort-Service");
+
+        import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
+
+        let activity: String = sqlx::query_scalar("SELECT activity FROM time_entries LIMIT 1")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(activity, "Vor-Ort-Service");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_activity_is_refused() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        seed_session(&pool, "s1", 600).await;
+
+        let error = edit_session(&pool, "s1", None, None, None, Some("Quatsch"))
+            .await
+            .unwrap_err();
+        assert!(error.contains("keine hinterlegte Leistungsart"), "{error}");
+    }
 
     #[tokio::test]
     async fn group_totals_use_the_corrected_duration() {
         let (_guard, pool) = crate::testdb::fixture().await;
         seed_session(&pool, "s1", 22 * 3600).await;
 
-        edit_session(&pool, "s1", None, Some(45 * 60), None)
+        edit_session(&pool, "s1", None, Some(45 * 60), None, None)
             .await
             .unwrap();
 
@@ -1040,7 +1273,7 @@ mod tests {
         seed_session(&pool, "s1", 600).await;
         seed_session(&pool, "s2", 300).await;
 
-        edit_session(&pool, "s2", None, None, Some(true)).await.unwrap();
+        edit_session(&pool, "s2", None, None, Some(true), None).await.unwrap();
 
         let groups = groups(&pool, "2026-11").await.unwrap();
         assert_eq!(groups[0].open_sessions, 1);
@@ -1068,10 +1301,10 @@ mod tests {
         .await
         .unwrap();
 
-        edit_session(&pool, "s1", Some("Logout vergessen"), Some(45 * 60), None)
+        edit_session(&pool, "s1", Some("Logout vergessen"), Some(45 * 60), None, None)
             .await
             .unwrap();
-        edit_session(&pool, "s2", None, None, Some(true)).await.unwrap();
+        edit_session(&pool, "s2", None, None, Some(true), None).await.unwrap();
 
         let report = import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
         assert_eq!(report.created, 1, "die ignorierte Sitzung bleibt draußen");
@@ -1107,8 +1340,7 @@ mod tests {
 
         import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
 
-        let error = edit_session(&pool, "s1", Some("zu spät"), None, None)
-            .await
+        let error = edit_session(&pool, "s1", Some("zu spät"), None, None, None).await
             .unwrap_err();
         assert!(error.contains("Zeiten"), "{error}");
     }

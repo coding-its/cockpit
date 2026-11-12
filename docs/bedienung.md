@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.12_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.13_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -518,7 +518,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.12_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.13_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -629,8 +629,11 @@ auffällig lang).
 - **Dauer (Minuten)** – überschreibt die Verbindungsdauer, etwa bei „Logout vergessen" oder
   „Anruf dazwischen". Die **Originalzeit von TeamViewer bleibt gespeichert** und steht unter dem
   Feld; mit **zurücksetzen** gilt sie wieder.
-- **Kommentar** – vorbelegt mit der TeamViewer-Notiz. Überschreiben oder ergänzen ist möglich;
-  das Original bleibt darunter sichtbar, ebenfalls mit **zurücksetzen**.
+- **Leistungsart** – die Kategorie aus dem Dropdown, z. B. „Remote Support" oder
+  „Vor-Ort-Service". Wird der Zeiteintrag übernommen, übernimmt er diese Kategorie. Fehlt sie,
+  gilt die Vorgabe. Die Liste steht unter „Leistungsarten" weiter unten.
+- **Kommentar** – dreizeiliges Feld, vorbelegt mit der TeamViewer-Notiz. Überschreiben oder
+  ergänzen ist möglich; das Original bleibt darunter sichtbar, mit **zurücksetzen**.
 - **×** rechts oben blendet eine Verbindung aus – gedacht für Duplikate, wenn ein
   Arbeitsvorgang auf zwei Rechnern protokolliert wurde. Ausgeblendete zählen nicht als offen
   und werden nicht übernommen; der Pfeil-Knopf holt sie zurück.
@@ -640,8 +643,13 @@ die Dauer auf **0** setzen und den Kommentar bei der ersten ergänzen. Dann blei
 dass beide Protokolle zusammengehören.
 
 **Nach der Übernahme** ist der Zeiteintrag maßgeblich; die Verbindung lässt sich dann nicht mehr
-ändern, sonst zeigten Nachweis und Protokoll unterschiedliche Zeiten. Änderungen laufen über
-*Zeiten*.
+ändern, sonst zeigten Nachweis und Protokoll unterschiedliche Zeiten. Aus demselben Grund lässt
+sich der entstandene Zeiteintrag **nicht löschen** (unter *Zeiten* erscheint er als Quelle
+„TeamViewer"). Falsch übernommen? Dann in der Verbindung **Übernahme zurücknehmen** – der
+Zeiteintrag verschwindet, die Verbindung ist wieder bearbeitbar. Bereits **abgerechnete** Zeiten
+bleiben: Eine ausgestellte Rechnung berichtigt man über eine Gutschrift, nicht durch Löschen.
+
+Steht die Übernahme-Knopf auf „0 offen", ist alles übernommen oder ausgeblendet.
 
 **Zuordnen:** TeamViewer führt eigene Kundennamen. Jede Gruppe wird über die Auswahlliste
 einem vorhandenen Kunden (oder Web-Kunden) zugeordnet. Passt ein Name, steht ein **Vorschlag**
@@ -669,6 +677,20 @@ einen eigenen Token, sonst fehlen dessen Sitzungen. Der Token lässt sich nachtr
 selbst aus den Verbindungen errechnet hat. Weicht sie stark ab, lohnt ein Blick auf die
 Sitzungsliste.
 
+## Leistungsarten (Kategorien)
+
+Unter *Zeiten* und im TeamViewer-Dialog wird die Leistung aus einer Liste gewählt, nicht frei
+getippt – sonst heißt dieselbe Arbeit einmal „Fernwartung", einmal „remote support", und die
+Auswertung zerfällt.
+
+**Pflegen:** *Einstellungen → Leistungen*. Anlegen, umbenennen, stilllegen. Stillgelegte
+erscheinen nicht mehr in den Auswahllisten; bereits erfasste Zeiten behalten ihren Namen.
+
+**Was im Eintrag steht:** Der Name zum Zeitpunkt der Erfassung. Wird eine Kategorie später
+umbenannt, bleiben alte Nachweise unverändert.
+
+**Vorgabe:** Fehlt bei einer TeamViewer-Verbindung eine Angabe, gilt „Remote Support".
+
 ## Abrechnungskonten (eine Firma, eine Rechnung)
 
 Dieselbe Firma kann im Cockpit mehrfach vorkommen: als NinjaOne-Kunde, als Web-Kunde und
@@ -678,8 +700,16 @@ Ein **Abrechnungskonto** fasst solche Datensätze zu **einer** Position zusammen
 **Anlegen:** *Einstellungen → Konten*. Kürzel (z. B. `MWK`) und Name eintragen, **Konto
 anlegen**. Das Kürzel ist eindeutig; „mwk" und „MWK" gelten als dasselbe.
 
-**Zuordnen:** In der Kundenansicht steht unter den Kontaktdaten **Abrechnungskonto** mit einer
-Auswahlliste. Dasselbe gibt es beim Web-Kunden. „– keins –" löst die Zuordnung wieder.
+**Zuordnen – gesammelt:** *Einstellungen → Konten*. Je Konto zwei Klapplisten: **NinjaOne** und
+**TeamViewer**. Dort wird eine Firma einmal zusammengeführt, statt bei jedem Kunden einzeln
+anzufangen. Ein zweiter Satz Klapplisten (NinjaOne, TeamViewer) steht direkt in der Kunden- und
+TeamViewer-Ansicht – dieselbe Zuordnung, nur von der anderen Seite bedient.
+
+Hinweis: Ein Konto führt **einen** NinjaOne-Kunden und **eine** TeamViewer-Gruppe. Braucht eine
+Firma mehrere Gerätegruppen, gehören sie in eine gemeinsame TeamViewer-Gruppe.
+
+**Kontoname gilt überall:** Sobald eine Firma einem Konto zugeordnet ist, erscheint der
+Kontoname statt des abgekürzten Datensatznamens – in Bericht, Aufstellung und Abrechnung.
 
 **Was sich ändert:** Alle Kunden mit demselben Konto erscheinen in Monatsbericht,
 Abrechnungsübersicht und Aufstellung als eine Zeile mit einer Summe. Im Bericht nennt der

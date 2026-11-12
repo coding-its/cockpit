@@ -34,6 +34,7 @@ pub fn router(state: SharedState) -> Router {
                 .patch(update_account)
                 .delete(delete_account),
         )
+        .route("/api/v1/accounts/overview", get(accounts_overview))
         .route(
             "/api/v1/accounts/{id}/statement",
             get(account_statement),
@@ -41,6 +42,15 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/v1/accounts/{id}/statement/billed",
             post(mark_account_statement),
+        )
+        .route(
+            "/api/v1/teamviewer/groups/{group_id}/account",
+            axum::routing::patch(assign_group_to_account),
+        )
+        .route("/api/v1/activities", get(list_activities).post(create_activity))
+        .route(
+            "/api/v1/activities/{id}",
+            axum::routing::patch(update_activity),
         )
         .route("/api/v1/teamviewer", get(teamviewer_groups))
         .route("/api/v1/teamviewer/status", get(teamviewer_status))
@@ -57,6 +67,10 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/api/v1/teamviewer/sessions/{session_id}",
             axum::routing::patch(teamviewer_edit_session),
+        )
+        .route(
+            "/api/v1/teamviewer/sessions/{session_id}/import",
+            axum::routing::delete(teamviewer_undo_import),
         )
         .route(
             "/api/v1/teamviewer/groups/{group_id}",
@@ -1953,6 +1967,99 @@ pub async fn teamviewer_status(
 }
 
 // ---------------------------------------------------------------------------
+// Leistungsarten
+// ---------------------------------------------------------------------------
+
+pub async fn list_activities(
+    State(state): State<SharedState>,
+    _user: CurrentUser,
+    Query(filter): Query<ActivityFilter>,
+) -> ApiResult<Json<Vec<crate::activities::ActivityKind>>> {
+    Ok(Json(
+        crate::activities::list(&state.pool, filter.include_inactive.unwrap_or(false)).await?,
+    ))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActivityFilter {
+    pub include_inactive: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateActivityRequest {
+    pub name: String,
+}
+
+pub async fn create_activity(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Json(payload): Json<CreateActivityRequest>,
+) -> ApiResult<Json<crate::activities::ActivityKind>> {
+    if payload.name.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "Bitte einen Namen angeben.".to_string(),
+        ));
+    }
+
+    let kind = crate::activities::create(&state.pool, &payload.name)
+        .await?
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Es gibt bereits eine Leistungsart „{}“.",
+                payload.name.trim()
+            ))
+        })?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "Leistungsart angelegt",
+        Some("activity_kind"),
+        Some(&kind.id),
+        &kind.name,
+    )
+    .await?;
+
+    Ok(Json(kind))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateActivityRequest {
+    pub name: Option<String>,
+    pub active: Option<bool>,
+}
+
+pub async fn update_activity(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(id): Path<String>,
+    Json(payload): Json<UpdateActivityRequest>,
+) -> ApiResult<Json<crate::activities::ActivityKind>> {
+    let kind = crate::activities::update(
+        &state.pool,
+        &id,
+        payload.name.as_deref(),
+        payload.active,
+    )
+    .await?
+    .ok_or_else(|| {
+        ApiError::BadRequest("Der Name ist vergeben oder leer.".to_string())
+    })?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "Leistungsart geändert",
+        Some("activity_kind"),
+        Some(&kind.id),
+        &format!("{} · {}", kind.name, if kind.active { "aktiv" } else { "stillgelegt" }),
+    )
+    .await?;
+
+    Ok(Json(kind))
+}
+
+// ---------------------------------------------------------------------------
 // TeamViewer-Zugang (Einstellungen, nur Administratoren)
 // ---------------------------------------------------------------------------
 
@@ -2133,6 +2240,8 @@ pub struct TeamViewerSessionEdit {
     /// `0` heißt: zurück auf die Verbindungsdauer.
     pub duration_seconds: Option<i64>,
     pub ignored: Option<bool>,
+    /// Leistungsart; leer heißt: Vorgabe („Remote Support").
+    pub activity: Option<String>,
 }
 
 /// Ändert Notiz, Dauer oder Sichtbarkeit einer einzelnen Verbindung.
@@ -2151,6 +2260,7 @@ pub async fn teamviewer_edit_session(
         payload.note.as_deref(),
         payload.duration_seconds,
         payload.ignored,
+        payload.activity.as_deref(),
     )
     .await
     .map_err(ApiError::BadRequest)?;
@@ -2160,7 +2270,11 @@ pub async fn teamviewer_edit_session(
         (_, Some(_)) => "wieder eingeblendet".to_string(),
         (Some(seconds), _) if seconds > 0 => format!("Dauer auf {seconds} s gesetzt"),
         (Some(_), _) => "Dauer auf Verbindungswert zurückgesetzt".to_string(),
-        (None, None) => "Notiz geändert".to_string(),
+        _ if payload.activity.is_some() => format!(
+            "Leistungsart: {}",
+            payload.activity.as_deref().unwrap_or("")
+        ),
+        _ => "Notiz geändert".to_string(),
     };
 
     audit(
@@ -2170,6 +2284,32 @@ pub async fn teamviewer_edit_session(
         Some("teamviewer_session"),
         Some(&session_id),
         &detail,
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
+
+/// Nimmt die Übernahme einer Verbindung zurück.
+///
+/// Nötig, weil übernommene Zeiten nicht gelöscht werden dürfen: Ohne diesen
+/// Weg wäre eine falsch übernommene Verbindung eine Sackgasse.
+pub async fn teamviewer_undo_import(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    crate::teamviewer::undo_import(&state.pool, &session_id)
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "TeamViewer-Übernahme zurückgenommen",
+        Some("teamviewer_session"),
+        Some(&session_id),
+        "Zeiteintrag entfernt, Verbindung wieder bearbeitbar.",
     )
     .await?;
 
@@ -2314,6 +2454,54 @@ fn month_bounds(month: &str) -> ApiResult<(String, String)> {
 // ---------------------------------------------------------------------------
 // Abrechnungskonten
 // ---------------------------------------------------------------------------
+
+/// Übersicht für die Kontenverwaltung: alle Konten mit ihren Quellen und die
+/// Auswahllisten für die Zuordnung.
+pub async fn accounts_overview(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+) -> ApiResult<Json<crate::accounts::AccountOverview>> {
+    if !user.role.is_admin() {
+        return Err(ApiError::Forbidden(
+            "Die Kontenverwaltung ist Administratoren vorbehalten.".to_string(),
+        ));
+    }
+
+    Ok(Json(crate::accounts::overview(&state.pool).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GroupAccountRequest {
+    pub account_id: Option<String>,
+}
+
+/// Ordnet eine TeamViewer-Gruppe über das Konto zu.
+pub async fn assign_group_to_account(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(group_id): Path<String>,
+    Json(payload): Json<GroupAccountRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    crate::accounts::assign_group_to_account(
+        &state.pool,
+        &group_id,
+        payload.account_id.as_deref(),
+    )
+    .await
+    .map_err(ApiError::BadRequest)?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "TeamViewer-Gruppe einem Konto zugeordnet",
+        Some("teamviewer_group"),
+        Some(&group_id),
+        payload.account_id.as_deref().unwrap_or("Zuordnung gelöst"),
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
+}
 
 pub async fn list_accounts(
     State(state): State<SharedState>,

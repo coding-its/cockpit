@@ -375,6 +375,14 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload),
     }),
+  teamviewerEditSession: (
+    sessionId: string,
+    payload: { note?: string; duration_seconds?: number; ignored?: boolean },
+  ) =>
+    request<{ ok: boolean }>(`/teamviewer/sessions/${sessionId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
   teamviewerImport: (groupId: string, month: string, billable = true) =>
     request<{ created: number; skipped: number; message: string }>(
       `/teamviewer/groups/${groupId}/import`,

@@ -445,10 +445,21 @@ pub struct SessionRow {
     pub user_name: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
+    /// Verbindungsdauer laut TeamViewer – das Original.
     pub duration_seconds: i64,
+    /// Von Hand gesetzte Dauer; `null` heißt: Original gilt.
+    pub duration_override_seconds: Option<i64>,
+    /// Dauer, die für die Übernahme gilt.
+    pub effective_seconds: i64,
     pub fee: f64,
+    /// Notiz aus TeamViewer.
     pub notes: Option<String>,
+    /// Nachgearbeitete Notiz; `null` heißt: Original gilt.
+    pub note_edit: Option<String>,
+    /// Notiz, die für die Übernahme gilt.
+    pub effective_note: Option<String>,
     pub imported_entry_id: Option<String>,
+    pub ignored: bool,
     /// Übergroße Sitzung – meist ein vergessener Logout.
     pub unusual: bool,
 }
@@ -472,12 +483,14 @@ pub async fn groups(pool: &PgPool, month: &str) -> Result<Vec<GroupRow>, sqlx::E
               WHERE s.group_id = g.group_id AND substr(s.started_at, 1, 7) = $1)::bigint AS sessions,
             (SELECT COUNT(*) FROM teamviewer_sessions s
               WHERE s.group_id = g.group_id AND substr(s.started_at, 1, 7) = $1
-                AND s.imported_entry_id IS NULL)::bigint AS open_sessions,
-            COALESCE((SELECT SUM(s.duration_seconds) FROM teamviewer_sessions s
+                AND s.imported_entry_id IS NULL AND s.ignored = false)::bigint AS open_sessions,
+            COALESCE((SELECT SUM(COALESCE(s.duration_override_seconds, s.duration_seconds))
+                        FROM teamviewer_sessions s
               WHERE s.group_id = g.group_id AND substr(s.started_at, 1, 7) = $1), 0)::bigint AS seconds,
-            COALESCE((SELECT SUM(s.duration_seconds) FROM teamviewer_sessions s
+            COALESCE((SELECT SUM(COALESCE(s.duration_override_seconds, s.duration_seconds))
+                        FROM teamviewer_sessions s
               WHERE s.group_id = g.group_id AND substr(s.started_at, 1, 7) = $1
-                AND s.imported_entry_id IS NULL), 0)::bigint AS open_seconds,
+                AND s.imported_entry_id IS NULL AND s.ignored = false), 0)::bigint AS open_seconds,
             COALESCE((SELECT SUM(s.fee) FROM teamviewer_sessions s
               WHERE s.group_id = g.group_id AND substr(s.started_at, 1, 7) = $1), 0)::double precision AS fee
         FROM teamviewer_groups g
@@ -547,8 +560,17 @@ pub async fn sessions(
         r#"
         SELECT
             id, group_id, group_name, device_name, user_name,
-            started_at, ended_at, duration_seconds, fee, notes, imported_entry_id,
-            (duration_seconds >= $3) AS unusual
+            started_at, ended_at,
+            duration_seconds,
+            duration_override_seconds,
+            COALESCE(duration_override_seconds, duration_seconds) AS effective_seconds,
+            fee,
+            notes,
+            note_edit,
+            COALESCE(NULLIF(note_edit, ''), notes) AS effective_note,
+            imported_entry_id,
+            ignored,
+            (COALESCE(duration_override_seconds, duration_seconds) >= $3) AS unusual
         FROM teamviewer_sessions
         WHERE substr(started_at, 1, 7) = $1
           AND ($2 IS NULL OR group_id = $2)
@@ -621,6 +643,96 @@ pub async fn set_ignored(pool: &PgPool, group_id: &str, ignored: bool) -> Result
     Ok(())
 }
 
+/// Ändert eine einzelne Sitzung.
+///
+/// Alle Angaben sind optional und werden nur gesetzt, wenn sie übergeben
+/// werden – so kann die Oberfläche eine Zeile ändern, ohne die übrigen zu
+/// kennen.
+///
+/// * `note`: leerer Text setzt auf die TeamViewer-Notiz zurück (`NULL`).
+/// * `duration_seconds`: `None` lässt die Dauer, `Some(0)` setzt sie auf die
+///   Verbindungsdauer zurück, ein Wert > 0 überschreibt sie.
+/// * `ignored`: blendet die Sitzung aus bzw. holt sie zurück.
+///
+/// Eine bereits übernommene Sitzung lässt sich nicht mehr ändern: Der
+/// Zeiteintrag ist dann die Wahrheit, sonst zeigten Nachweis und Sitzung
+/// unterschiedliche Zeiten.
+pub async fn edit_session(
+    pool: &PgPool,
+    id: &str,
+    note: Option<&str>,
+    duration_seconds: Option<i64>,
+    ignored: Option<bool>,
+) -> Result<(), String> {
+    let existing: Option<Option<String>> =
+        sqlx::query_scalar("SELECT imported_entry_id FROM teamviewer_sessions WHERE id = $1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+
+    let Some(imported) = existing else {
+        return Err(format!("Verbindung {id} nicht gefunden"));
+    };
+
+    if imported.is_some() {
+        return Err(
+            "Diese Verbindung wurde bereits als Zeiteintrag übernommen. Die Zeit lässt sich              jetzt nur noch unter „Zeiten“ ändern."
+                .to_string(),
+        );
+    }
+
+    if let Some(note) = note {
+        let trimmed = note.trim();
+        let value = if trimmed.is_empty() {
+            None
+        } else {
+            Some(if trimmed.chars().count() > 400 {
+                trimmed.chars().take(400).collect::<String>()
+            } else {
+                trimmed.to_string()
+            })
+        };
+
+        sqlx::query("UPDATE teamviewer_sessions SET note_edit = $1 WHERE id = $2")
+            .bind(&value)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+
+    if let Some(seconds) = duration_seconds {
+        // 0 und negative Werte bedeuten: zurück auf die Verbindungsdauer.
+        let value = if seconds <= 0 { None } else { Some(seconds) };
+
+        if let Some(value) = value {
+            // Absurd lange Korrekturen abfangen (mehr als 24 Stunden).
+            if value > 24 * 3600 {
+                return Err("Eine Dauer über 24 Stunden ist nicht plausibel.".to_string());
+            }
+        }
+
+        sqlx::query("UPDATE teamviewer_sessions SET duration_override_seconds = $1 WHERE id = $2")
+            .bind(value)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+
+    if let Some(ignored) = ignored {
+        sqlx::query("UPDATE teamviewer_sessions SET ignored = $1 WHERE id = $2")
+            .bind(ignored)
+            .bind(id)
+            .execute(pool)
+            .await
+            .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
+}
+
 /// Ergebnis einer Übernahme.
 #[derive(Debug, Serialize)]
 pub struct ImportReport {
@@ -659,12 +771,16 @@ pub async fn import_sessions(
             .to_string());
     }
 
+    // Korrigierte Dauer und nachgearbeitete Notiz haben Vorrang; ignorierte
+    // Sitzungen (Duplikate, Fehlklicks) bleiben draußen.
     let open: Vec<(String, String, Option<String>, Option<String>, i64, Option<String>)> =
         sqlx::query_as(
-            "SELECT id, started_at, ended_at, user_name, duration_seconds, notes
+            "SELECT id, started_at, ended_at, user_name,
+                    COALESCE(duration_override_seconds, duration_seconds),
+                    COALESCE(NULLIF(note_edit, ''), notes)
              FROM teamviewer_sessions
              WHERE group_id = $1 AND substr(started_at, 1, 7) = $2
-               AND imported_entry_id IS NULL
+               AND imported_entry_id IS NULL AND ignored = false
              ORDER BY started_at",
         )
         .bind(group_id)
@@ -774,7 +890,10 @@ fn matches(a: &str, b: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{matches, normalize, parse_time, single_line};
+    use super::{
+        edit_session, groups, import_sessions, matches, normalize, parse_time, sessions,
+        single_line,
+    };
 
     #[test]
     fn reads_both_timestamp_formats() {
@@ -796,6 +915,202 @@ mod tests {
         // Zu kurze Übereinstimmungen sind kein Vorschlag.
         assert!(!matches(&normalize("RA"), &normalize("RA Reichelt")));
         assert!(!matches(&normalize("Leu"), &normalize("Musterwerk")));
+    }
+
+
+    // -----------------------------------------------------------------------
+    // Bearbeiten einzelner Verbindungen
+    // -----------------------------------------------------------------------
+
+    async fn seed_session(pool: &sqlx::PgPool, id: &str, seconds: i64) {
+        sqlx::query(
+            "INSERT INTO teamviewer_groups (group_id, name, updated_at)
+             VALUES ('g1', 'Musterwerk', '2026-11-01T00:00:00')
+             ON CONFLICT (group_id) DO NOTHING",
+        )
+        .execute(pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            "INSERT INTO teamviewer_sessions
+                (id, group_id, group_name, device_name, user_name, started_at, ended_at,
+                 duration_seconds, fee, notes, synced_at)
+             VALUES ($1, 'g1', 'Musterwerk', 'PC-1', 'Techniker', '2026-11-09T10:31:00',
+                     '2026-11-09T10:41:00', $2, 0, 'Original-Notiz', '2026-11-09T12:00:00')",
+        )
+        .bind(id)
+        .bind(seconds)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_edited_note_replaces_the_original_but_keeps_it() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        seed_session(&pool, "s1", 600).await;
+
+        edit_session(&pool, "s1", Some("Anruf dazwischen"), None, None)
+            .await
+            .unwrap();
+
+        let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
+        assert_eq!(rows[0].effective_note.as_deref(), Some("Anruf dazwischen"));
+        // Das Original bleibt erhalten – sonst wäre die Herkunft verloren.
+        assert_eq!(rows[0].notes.as_deref(), Some("Original-Notiz"));
+    }
+
+    #[tokio::test]
+    async fn an_empty_note_restores_the_original() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        seed_session(&pool, "s1", 600).await;
+
+        edit_session(&pool, "s1", Some("eigener Text"), None, None)
+            .await
+            .unwrap();
+        edit_session(&pool, "s1", Some("   "), None, None).await.unwrap();
+
+        let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
+        assert_eq!(rows[0].effective_note.as_deref(), Some("Original-Notiz"));
+        assert!(rows[0].note_edit.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_corrected_duration_keeps_the_original_visible() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        // 22 Stunden offen – vergessener Logout.
+        seed_session(&pool, "s1", 22 * 3600).await;
+
+        edit_session(&pool, "s1", None, Some(45 * 60), None)
+            .await
+            .unwrap();
+
+        let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
+        assert_eq!(rows[0].effective_seconds, 45 * 60);
+        assert_eq!(rows[0].duration_seconds, 22 * 3600, "Original bleibt erhalten");
+        assert!(!rows[0].unusual, "nach der Korrektur nicht mehr auffällig");
+    }
+
+    #[tokio::test]
+    async fn zero_restores_the_connection_duration() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        seed_session(&pool, "s1", 600).await;
+
+        edit_session(&pool, "s1", None, Some(60), None).await.unwrap();
+        edit_session(&pool, "s1", None, Some(0), None).await.unwrap();
+
+        let rows = sessions(&pool, "2026-11", Some("g1")).await.unwrap();
+        assert_eq!(rows[0].effective_seconds, 600);
+        assert!(rows[0].duration_override_seconds.is_none());
+    }
+
+    #[tokio::test]
+    async fn an_absurd_duration_is_rejected() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        seed_session(&pool, "s1", 600).await;
+
+        assert!(edit_session(&pool, "s1", None, Some(30 * 3600), None)
+            .await
+            .is_err());
+    }
+
+
+    #[tokio::test]
+    async fn group_totals_use_the_corrected_duration() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        seed_session(&pool, "s1", 22 * 3600).await;
+
+        edit_session(&pool, "s1", None, Some(45 * 60), None)
+            .await
+            .unwrap();
+
+        let rows = groups(&pool, "2026-11").await.unwrap();
+        assert_eq!(
+            rows[0].open_seconds,
+            45 * 60,
+            "die Korrektur muss in die Gruppensumme eingehen, sonst stimmt              die Zahl im Reiter nicht mit den Sitzungen darunter"
+        );
+        assert_eq!(rows[0].seconds, 45 * 60);
+    }
+
+    #[tokio::test]
+    async fn ignored_sessions_do_not_count_as_open() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+        seed_session(&pool, "s1", 600).await;
+        seed_session(&pool, "s2", 300).await;
+
+        edit_session(&pool, "s2", None, None, Some(true)).await.unwrap();
+
+        let groups = groups(&pool, "2026-11").await.unwrap();
+        assert_eq!(groups[0].open_sessions, 1);
+        assert_eq!(groups[0].open_seconds, 600);
+    }
+
+    #[tokio::test]
+    async fn import_uses_the_corrections_and_skips_ignored() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, '2026-11-01T00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_session(&pool, "s1", 22 * 3600).await;
+        seed_session(&pool, "s2", 300).await;
+        sqlx::query(
+            "UPDATE teamviewer_groups SET customer_id = 'c1' WHERE group_id = 'g1'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        edit_session(&pool, "s1", Some("Logout vergessen"), Some(45 * 60), None)
+            .await
+            .unwrap();
+        edit_session(&pool, "s2", None, None, Some(true)).await.unwrap();
+
+        let report = import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
+        assert_eq!(report.created, 1, "die ignorierte Sitzung bleibt draußen");
+
+        let (seconds, note): (i64, String) = sqlx::query_as(
+            "SELECT duration_seconds, COALESCE(note,'') FROM time_entries LIMIT 1",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(seconds, 45 * 60, "die korrigierte Dauer zählt");
+        assert!(note.contains("Logout vergessen"), "{note}");
+    }
+
+    #[tokio::test]
+    async fn an_imported_session_cannot_be_edited_anymore() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+
+        sqlx::query(
+            "INSERT INTO customers (id, name, short_code, active, created_at)
+             VALUES ('c1', 'Musterwerk GmbH', 'MWK', true, '2026-11-01T00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        seed_session(&pool, "s1", 600).await;
+        sqlx::query("UPDATE teamviewer_groups SET customer_id = 'c1' WHERE group_id = 'g1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        import_sessions(&pool, "g1", "2026-11", true).await.unwrap();
+
+        let error = edit_session(&pool, "s1", Some("zu spät"), None, None)
+            .await
+            .unwrap_err();
+        assert!(error.contains("Zeiten"), "{error}");
     }
 
     #[test]

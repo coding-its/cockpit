@@ -29,11 +29,80 @@ pub async fn init(url: &str) -> anyhow::Result<PgPool> {
             )
         })?;
 
-    sqlx::migrate!("./migrations_pg")
-        .run(&pool)
-        .await
-        .map_err(|error| anyhow::anyhow!("{}", migration_message(&error)))?;
+    run_migrations(&pool).await?;
     Ok(pool)
+}
+
+/// Spielt fehlende Schema-Anpassungen ein und duldet dabei eine Datenbank,
+/// die **weiter** ist als diese Programmversion.
+///
+/// Anlass: Sobald eine neue Fassung das Schema ergänzt, konnte jede ältere
+/// Installation sich nicht mehr anmelden – obwohl sie das neue Feld gar nicht
+/// benutzt. Bei mehreren Arbeitsplätzen heißt das: Niemand darf starten, bevor
+/// alle aktualisiert sind. Das ist eine unnötige Sperre.
+///
+/// Da Anpassungen nur Spalten und Tabellen **ergänzen**, funktioniert eine
+/// ältere Fassung auf einem neueren Schema weiter. Voraussetzung ist, dass
+/// alles, was diese Fassung kennt, in der Datenbank steht und unverändert ist.
+/// Das wird geprüft – es wird also nicht blind weitergelaufen.
+async fn run_migrations(pool: &PgPool) -> anyhow::Result<()> {
+    let migrator = sqlx::migrate!("./migrations_pg");
+
+    match migrator.run(pool).await {
+        Ok(()) => Ok(()),
+        Err(sqlx::migrate::MigrateError::VersionMissing(version)) => {
+            verify_known_migrations(pool, &migrator).await?;
+
+            tracing::warn!(
+                schema_stand = version,
+                eigene_fassung = migrator.migrations.iter().map(|m| m.version).max().unwrap_or(0),
+                "Die Datenbank ist neuer als diese Programmversion. Sie läuft mit dem \
+                 Schema, das sie kennt – bitte bald aktualisieren."
+            );
+
+            Ok(())
+        }
+        Err(error) => Err(anyhow::anyhow!("{}", migration_message(&error))),
+    }
+}
+
+/// Prüft, dass alle Anpassungen dieser Fassung vorhanden und unverändert sind.
+///
+/// Das ist die Bedingung dafür, auf einem neueren Schema weiterzulaufen: Fehlt
+/// eine, wäre die Anwendung auf einer Datenbank ohne die Spalten unterwegs, die
+/// sie braucht.
+async fn verify_known_migrations(
+    pool: &PgPool,
+    migrator: &sqlx::migrate::Migrator,
+) -> anyhow::Result<()> {
+    for migration in migrator.migrations.iter() {
+        let row: Option<(Vec<u8>, bool)> = sqlx::query_as(
+            "SELECT checksum, success FROM _sqlx_migrations WHERE version = $1",
+        )
+        .bind(migration.version)
+        .fetch_optional(pool)
+        .await?;
+
+        match row {
+            Some((checksum, true)) if checksum == migration.checksum.as_ref() => {}
+            Some((_, true)) => {
+                anyhow::bail!(
+                    "{}",
+                    migration_message(&sqlx::migrate::MigrateError::VersionMismatch(
+                        migration.version
+                    ))
+                );
+            }
+            _ => anyhow::bail!(
+                "Die Datenbank ist neuer als diese Programmversion, aber ihr fehlt die \
+                 Anpassung Nr. {}. Bitte das Wartungscockpit aktualisieren – an den Daten \
+                 ist nichts beschädigt.",
+                migration.version
+            ),
+        }
+    }
+
+    Ok(())
 }
 
 /// Übersetzt Schemafehler in etwas, das man lesen kann.
@@ -189,6 +258,39 @@ mod tests {
         assert!(!message.contains("ältere Version"), "{message}");
     }
 
+    /// Eine ältere Installation darf auf einer neueren Datenbank weiterlaufen.
+    ///
+    /// Genau daran sind wir zweimal gescheitert: Sobald eine neue Fassung das
+    /// Schema ergänzte, war jeder andere Rechner ausgesperrt, bis er ebenfalls
+    /// aktualisiert war.
+    #[tokio::test]
+    async fn a_newer_schema_does_not_block_an_older_installation() {
+        let (_guard, pool) = crate::testdb::fixture().await;
+
+        // Eine Anpassung, die diese Fassung nicht kennt.
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+                (version, description, installed_on, success, checksum, execution_time)
+             VALUES (999, 'zukunft', now(), true, decode(repeat('00', 48), 'hex'), 0)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let result = super::run_migrations(&pool).await;
+        assert!(
+            result.is_ok(),
+            "ältere Fassung darf nicht ausgesperrt werden: {:?}",
+            result.err()
+        );
+
+        // Aufräumen, damit folgende Tests den Stand nicht erben.
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 999")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
     /// Eine ausgelieferte Migration darf nicht mehr verändert werden – auch
     /// nicht im Kommentar. Sonst weicht die Prüfsumme von der Datenbank ab und
     /// jede Installation scheitert beim Start. Genau das ist einmal passiert.
@@ -264,9 +366,9 @@ mod tests {
 
     #[test]
     fn known_schema_version_matches_the_shipped_migrations() {
-        // 0001_schema, 0002_billed, 0003_accounts, 0004_teamviewer –
-        // wächst mit jeder neuen Datei.
-        assert_eq!(known_schema_version(), 4);
+        // 0001_schema, 0002_billed, 0003_accounts, 0004_teamviewer,
+        // 0005_session_edits – wächst mit jeder neuen Datei.
+        assert_eq!(known_schema_version(), 5);
     }
 
     #[test]

@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.11_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.12_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -41,6 +41,11 @@ nicht weitergeben, außer an die eigenen Arbeitsplätze.
 Das MSI braucht **Administratorrechte** – Windows fragt beim Doppelklick danach. Eine neue
 Fassung lässt sich normalerweise einfach darüberinstallieren; die Verbindung in
 `%APPDATA%\Wartungscockpit\` bleibt dabei erhalten.
+
+**Wenn eine neuere Fassung auf dem Server läuft** als die eigene, startet die Anwendung
+trotzdem – sie benutzt das Schema, das sie kennt. Die Protokolldatei enthält dann einen Hinweis.
+Das ist beabsichtigt: Bei mehreren Arbeitsplätzen muss niemand warten, bis alle aktualisiert
+sind. Voraussetzung ist, dass die Schema-Anpassungen nur ergänzen, nicht ändern.
 
 **Wenn die Meldung „Die Anpassung Nr. … stimmt nicht überein" erscheint**, ist eine
 Schema-Anpassung nachträglich verändert worden – ein Fehler in der Auslieferung, nicht an der
@@ -513,7 +518,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.11_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.12_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -615,14 +620,28 @@ Ein Neustart ist nicht nötig: Der Token wird bei jedem Abgleich neu gelesen.
 **Abgleichen:** **Jetzt abgleichen** holt die Verbindungen des gewählten Monats.
 Es wird nichts automatisch übernommen – der Abgleich füllt nur die Liste.
 
-**Einträge ansehen:** Klick auf den Gruppennamen (mit Pfeil) öffnet die Sitzungsliste des
-Monats: Beginn, Gerät, Person, Dauer, TeamViewer-Notiz und Status (offen / übernommen /
+**Einträge ansehen:** Klick auf den Gruppennamen öffnet die Verbindungen des Monats in einem
+eigenen Fenster – mit Beginn, Gerät, Person, Dauer, Kommentar und Status (offen / übernommen /
 auffällig lang).
 
-**Bearbeiten:** möglich sind derzeit die **Zuordnung** der Gruppe zum Kunden, das
-**Übernehmen** als Zeiteintrag und das **Ausblenden** einer Gruppe. Einzelne Sitzungen lassen
-sich ansehen, aber nicht verändern – eine übernommene Sitzung ändert man über den Zeiteintrag
-(*Zeiten*), eine nicht gewünschte wird vorher nicht übernommen.
+**Bearbeiten:** je Verbindung, solange sie nicht übernommen ist:
+
+- **Dauer (Minuten)** – überschreibt die Verbindungsdauer, etwa bei „Logout vergessen" oder
+  „Anruf dazwischen". Die **Originalzeit von TeamViewer bleibt gespeichert** und steht unter dem
+  Feld; mit **zurücksetzen** gilt sie wieder.
+- **Kommentar** – vorbelegt mit der TeamViewer-Notiz. Überschreiben oder ergänzen ist möglich;
+  das Original bleibt darunter sichtbar, ebenfalls mit **zurücksetzen**.
+- **×** rechts oben blendet eine Verbindung aus – gedacht für Duplikate, wenn ein
+  Arbeitsvorgang auf zwei Rechnern protokolliert wurde. Ausgeblendete zählen nicht als offen
+  und werden nicht übernommen; der Pfeil-Knopf holt sie zurück.
+
+Ein Arbeitsvorgang auf zwei Rechnern lässt sich auch anders lösen: Bei der zweiten Verbindung
+die Dauer auf **0** setzen und den Kommentar bei der ersten ergänzen. Dann bleibt nachvollziehbar,
+dass beide Protokolle zusammengehören.
+
+**Nach der Übernahme** ist der Zeiteintrag maßgeblich; die Verbindung lässt sich dann nicht mehr
+ändern, sonst zeigten Nachweis und Protokoll unterschiedliche Zeiten. Änderungen laufen über
+*Zeiten*.
 
 **Zuordnen:** TeamViewer führt eigene Kundennamen. Jede Gruppe wird über die Auswahlliste
 einem vorhandenen Kunden (oder Web-Kunden) zugeordnet. Passt ein Name, steht ein **Vorschlag**

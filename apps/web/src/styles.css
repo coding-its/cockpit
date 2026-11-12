@@ -5320,3 +5320,128 @@ a.demo-card.demo-card--live:hover {
 .tv-chevron.is-open {
   transform: rotate(90deg);
 }
+
+/* Breiter Dialog für Tabellen und Listen */
+
+.modal--wide {
+  width: min(980px, 100%);
+}
+
+/* TeamViewer-Verbindungen im Dialog */
+
+.tv-modal-hint {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 12.6px;
+  line-height: 1.55;
+}
+
+.tv-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tv-session {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.tv-session-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tv-session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.8px;
+}
+
+.tv-session-meta strong {
+  font-size: 13px;
+}
+
+.tv-session-device {
+  font-weight: 600;
+  color: #344054;
+}
+
+.tv-session-user {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.tv-session-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tv-session-fields {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 9px;
+}
+
+.tv-duration {
+  flex: 0 0 130px;
+}
+
+.tv-duration input {
+  width: 100%;
+}
+
+.tv-note {
+  flex: 1;
+  min-width: 0;
+}
+
+.tv-session-fields .field-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.link-inline {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--primary);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.tv-session.is-ignored {
+  opacity: 0.62;
+  background: #fafafa;
+  border-style: dashed;
+}
+
+.tv-session.is-imported {
+  background: #f9fefd;
+}
+
+.tv-modal-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.tv-modal-sum {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12.6px;
+  font-variant-numeric: tabular-nums;
+}

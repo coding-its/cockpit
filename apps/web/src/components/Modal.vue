@@ -6,6 +6,8 @@ const props = defineProps<{
   open: boolean
   title: string
   subtitle?: string
+  /** `wide` für Tabellen mit mehreren Spalten. */
+  size?: 'normal' | 'wide'
 }>()
 
 const emit = defineEmits<{ close: [] }>()
@@ -114,7 +116,7 @@ onUnmounted(() => {
         <div
           ref="modalEl"
           class="modal"
-          :class="{ 'is-dragging': dragging }"
+          :class="{ 'is-dragging': dragging, 'modal--wide': size === 'wide' }"
           role="dialog"
           aria-modal="true"
           :aria-label="title"

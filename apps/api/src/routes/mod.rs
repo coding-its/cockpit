@@ -55,6 +55,10 @@ pub fn router(state: SharedState) -> Router {
         .route("/api/v1/teamviewer/sync", post(teamviewer_sync))
         .route("/api/v1/teamviewer/sessions", get(teamviewer_sessions))
         .route(
+            "/api/v1/teamviewer/sessions/{session_id}",
+            axum::routing::patch(teamviewer_edit_session),
+        )
+        .route(
             "/api/v1/teamviewer/groups/{group_id}",
             axum::routing::patch(teamviewer_assign),
         )
@@ -2120,6 +2124,56 @@ pub async fn teamviewer_groups(
     }
 
     Ok(Json(crate::teamviewer::groups(&state.pool, &month).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TeamViewerSessionEdit {
+    /// Leer heißt: zurück auf die TeamViewer-Notiz.
+    pub note: Option<String>,
+    /// `0` heißt: zurück auf die Verbindungsdauer.
+    pub duration_seconds: Option<i64>,
+    pub ignored: Option<bool>,
+}
+
+/// Ändert Notiz, Dauer oder Sichtbarkeit einer einzelnen Verbindung.
+///
+/// Nur solange sie nicht übernommen ist – danach ist der Zeiteintrag die
+/// Wahrheit, sonst zeigten Nachweis und Sitzung verschiedene Zeiten.
+pub async fn teamviewer_edit_session(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Path(session_id): Path<String>,
+    Json(payload): Json<TeamViewerSessionEdit>,
+) -> ApiResult<Json<serde_json::Value>> {
+    crate::teamviewer::edit_session(
+        &state.pool,
+        &session_id,
+        payload.note.as_deref(),
+        payload.duration_seconds,
+        payload.ignored,
+    )
+    .await
+    .map_err(ApiError::BadRequest)?;
+
+    let detail = match (payload.duration_seconds, payload.ignored) {
+        (_, Some(ignored)) if ignored => "ausgeblendet".to_string(),
+        (_, Some(_)) => "wieder eingeblendet".to_string(),
+        (Some(seconds), _) if seconds > 0 => format!("Dauer auf {seconds} s gesetzt"),
+        (Some(_), _) => "Dauer auf Verbindungswert zurückgesetzt".to_string(),
+        (None, None) => "Notiz geändert".to_string(),
+    };
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "TeamViewer-Verbindung geändert",
+        Some("teamviewer_session"),
+        Some(&session_id),
+        &detail,
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 pub async fn teamviewer_sessions(

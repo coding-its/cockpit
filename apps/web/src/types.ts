@@ -770,10 +770,18 @@ export interface TeamViewerSession {
   user_name: string | null
   started_at: string
   ended_at: string | null
+  /** Verbindungsdauer laut TeamViewer. */
   duration_seconds: number
+  /** Von Hand gesetzt; `null` heißt: Original gilt. */
+  duration_override_seconds: number | null
+  /** Dauer, die für die Übernahme gilt. */
+  effective_seconds: number
   fee: number
   notes: string | null
+  note_edit: string | null
+  effective_note: string | null
   imported_entry_id: string | null
+  ignored: boolean
   unusual: boolean
 }
 

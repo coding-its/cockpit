@@ -1,7 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Building2, Calculator, Database, RefreshCw, Save, Server, UserCog } from 'lucide-vue-next'
+import {
+  Building2,
+  Calculator,
+  Database,
+  MonitorSmartphone,
+  RefreshCw,
+  Save,
+  Server,
+  UserCog,
+} from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
 import { currency } from '../format'
 import type { BillingSettings } from '../types'
@@ -9,13 +18,14 @@ import UsersView from './UsersView.vue'
 import AccountSettings from '../components/AccountSettings.vue'
 import DatabaseSettings from '../components/DatabaseSettings.vue'
 import EnvSettings from '../components/EnvSettings.vue'
+import TeamViewerSettings from '../components/TeamViewerSettings.vue'
 import { useAppStore } from '../stores/app'
 
 const route = useRoute()
 const router = useRouter()
 const store = useAppStore()
 
-type Tab = 'benutzer' | 'abrechnung' | 'konten' | 'datenbank' | 'ninjaone'
+type Tab = 'benutzer' | 'abrechnung' | 'konten' | 'datenbank' | 'ninjaone' | 'teamviewer'
 
 const tabs: Array<{ key: Tab; label: string; icon: typeof UserCog }> = [
   { key: 'benutzer', label: 'Benutzer', icon: UserCog },
@@ -23,11 +33,18 @@ const tabs: Array<{ key: Tab; label: string; icon: typeof UserCog }> = [
   { key: 'konten', label: 'Konten', icon: Building2 },
   { key: 'datenbank', label: 'Datenbank', icon: Database },
   { key: 'ninjaone', label: 'NinjaOne', icon: Server },
+  { key: 'teamviewer', label: 'TeamViewer', icon: MonitorSmartphone },
 ]
 
 const activeTab = computed<Tab>(() => {
   const tab = route.query.tab
-  if (tab === 'abrechnung' || tab === 'konten' || tab === 'datenbank' || tab === 'ninjaone') {
+  if (
+    tab === 'abrechnung' ||
+    tab === 'konten' ||
+    tab === 'datenbank' ||
+    tab === 'ninjaone' ||
+    tab === 'teamviewer'
+  ) {
     return tab
   }
   return 'benutzer'
@@ -126,6 +143,7 @@ onMounted(loadBilling)
     <DatabaseSettings v-else-if="activeTab === 'datenbank'" />
 
     <EnvSettings v-else-if="activeTab === 'ninjaone'" />
+    <TeamViewerSettings v-else-if="activeTab === 'teamviewer'" />
 
     <template v-else-if="activeTab === 'abrechnung'">
       <div v-if="billingLoading" class="skeleton skeleton--panel" />

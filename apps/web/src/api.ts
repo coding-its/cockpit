@@ -343,6 +343,18 @@ export const api = {
     }),
   accounts: () => request<Account[]>('/accounts'),
   teamviewerStatus: () => request<TeamViewerStatus>('/teamviewer/status'),
+  teamviewerSettings: () =>
+    request<{ configured: boolean; source: string | null }>('/settings/teamviewer'),
+  updateTeamViewerSettings: (payload: { token?: string; clear?: boolean; test_only?: boolean }) =>
+    request<{ ok: boolean; configured: boolean; report?: string; file?: string }>(
+      '/settings/teamviewer',
+      { method: 'PUT', body: JSON.stringify(payload) },
+    ),
+  testTeamViewerSettings: (token: string) =>
+    request<{ ok: boolean; report: string }>('/settings/teamviewer/test', {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
   teamviewerGroups: (month: string) =>
     request<TeamViewerGroup[]>(`/teamviewer?month=${encodeURIComponent(month)}`),
   teamviewerSessions: (month: string, groupId?: string) => {

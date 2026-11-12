@@ -59,6 +59,153 @@ pub fn configured() -> bool {
     token().is_some()
 }
 
+/// Woher der Token kommt – für die Anzeige in den Einstellungen.
+///
+/// `None`, wenn keiner hinterlegt ist. Sonst ein lesbarer Hinweis, damit
+/// niemand rätselt, warum ein neu eingetragener Token nicht greift: Eine
+/// Umgebungsvariable hat Vorrang vor der Datei.
+pub fn token_source() -> Option<String> {
+    if let Ok(value) = std::env::var("TEAMVIEWER_TOKEN") {
+        if !value.trim().is_empty() {
+            return Some("Umgebungsvariable TEAMVIEWER_TOKEN".to_string());
+        }
+    }
+
+    token_paths()
+        .into_iter()
+        .find(|path| {
+            std::fs::read_to_string(path)
+                .map(|text| !text.trim().is_empty())
+                .unwrap_or(false)
+        })
+        .map(|path| path.display().to_string())
+}
+
+/// Ablageort beim Speichern: vorhandene Datei überschreiben, sonst dort
+/// anlegen, wo die Anwendung schreiben darf.
+///
+/// Unter `Program Files` darf niemand schreiben – deshalb `%APPDATA%` zuerst,
+/// wenn noch keine Datei existiert.
+fn target_path() -> PathBuf {
+    if let Some(existing) = token_paths().into_iter().find(|path| path.exists()) {
+        return existing;
+    }
+
+    crate::dbconfig::DbConfig::app_data_dir()
+        .map(|dir| dir.join("teamviewer-token.txt"))
+        .unwrap_or_else(|| PathBuf::from("data").join("teamviewer-token.txt"))
+}
+
+/// Legt den Token ab. Ein vorhandener wird überschrieben.
+pub fn save_token(value: &str) -> Result<PathBuf, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Der Token darf nicht leer sein.".to_string());
+    }
+
+    // Steuerzeichen deuten auf einen kopierten Zeilenumbruch oder eine
+    // kaputte Zwischenablage – lieber melden als speichern.
+    if value.chars().any(|c| c.is_control()) {
+        return Err(
+            "Der Token enthält ein Steuerzeichen. Bitte ohne Zeilenumbruch einfügen."
+                .to_string(),
+        );
+    }
+
+    let path = target_path();
+
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)
+            .map_err(|error| format!("Ordner {} nicht anlegbar: {error}", dir.display()))?;
+    }
+
+    std::fs::write(&path, value)
+        .map_err(|error| format!("Datei {} nicht schreibbar: {error}", path.display()))?;
+
+    Ok(path)
+}
+
+/// Entfernt den Token aus der Datei.
+///
+/// Eine Umgebungsvariable lässt sich hier nicht ändern – das wird gemeldet,
+/// statt still wirkungslos zu bleiben.
+pub fn clear_token() -> Result<(), String> {
+    if let Ok(value) = std::env::var("TEAMVIEWER_TOKEN") {
+        if !value.trim().is_empty() {
+            return Err("Der Token kommt aus der Umgebungsvariable TEAMVIEWER_TOKEN. Bitte dort \
+                        entfernen – die Datei hier hätte keine Wirkung."
+                .to_string());
+        }
+    }
+
+    for path in token_paths() {
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|error| format!("{} nicht löschbar: {error}", path.display()))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Prüft einen Token gegen die TeamViewer-API, ohne ihn zu speichern.
+///
+/// Bei fehlender Berechtigung nennt die Meldung den genauen Punkt im
+/// Management Console – das ist der häufigste Fehler beim Anlegen.
+pub async fn probe(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("Bitte einen Token eingeben.".to_string());
+    }
+
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let url = format!(
+        "{API}/reports/connections?from_date={today}T00:00:00Z&to_date={today}T23:59:59Z"
+    );
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .bearer_auth(value)
+        .send()
+        .await
+        .map_err(|error| format!("TeamViewer nicht erreichbar: {error}"))?;
+
+    let status = response.status();
+
+    if status.as_u16() == 401 {
+        return Err("Der Token wird abgelehnt. Bitte Zeichen für Zeichen prüfen – er wird nur \
+                    einmal angezeigt und lässt sich nicht nachlesen."
+            .to_string());
+    }
+
+    if status.as_u16() == 403 {
+        return Err("Der Token ist gültig, aber ihm fehlt die Berechtigung \
+                    „Verbindungsprotokollierung → Verbindungsprotokolle lesen“."
+            .to_string());
+    }
+
+    if !status.is_success() {
+        return Err(format!("TeamViewer antwortet mit HTTP {}.", status.as_u16()));
+    }
+
+    let payload: ConnectionsResponse = response
+        .json()
+        .await
+        .map_err(|error| format!("Antwort nicht lesbar: {error}"))?;
+
+    let with_device = payload
+        .records
+        .iter()
+        .filter(|record| record.devicename.is_some())
+        .count();
+
+    Ok(format!(
+        "Zugang gültig · {} Verbindung(en) seit Mitternacht, davon {with_device} mit Gerätenamen.",
+        payload.records.len()
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 struct ConnectionsResponse {
     #[serde(default)]
@@ -649,6 +796,21 @@ mod tests {
         // Zu kurze Übereinstimmungen sind kein Vorschlag.
         assert!(!matches(&normalize("RA"), &normalize("RA Reichelt")));
         assert!(!matches(&normalize("Leu"), &normalize("Musterwerk")));
+    }
+
+    #[test]
+    fn empty_or_multiline_tokens_are_rejected() {
+        // Beides bricht vor dem Schreiben ab – es wird keine Datei angefasst.
+        assert!(super::save_token("").is_err());
+        assert!(super::save_token("   ").is_err());
+        assert!(
+            super::save_token("abc\ndef").is_err(),
+            "Zeilenumbruch aus der Zwischenablage"
+        );
+        assert!(
+            super::save_token("abc\rdef").is_err(),
+            "Wagenrücklauf aus der Zwischenablage"
+        );
     }
 
     #[test]

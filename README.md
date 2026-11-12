@@ -18,7 +18,7 @@ npm run installer:desktop  # MSI erzeugen
 ```
 
 Ergebnis: `apps/desktop/src-tauri/target/release/wartungscockpit.exe` (14 MB) und
-`…/bundle/msi/Wartungscockpit_0.1.10_x64_de-DE.msi` (5,5 MB).
+`…/bundle/msi/Wartungscockpit_0.1.11_x64_de-DE.msi` (5,5 MB).
 
 **Nach der Installation** sucht die App ihre Einstellungen in dieser Reihenfolge:
 `%DB_CONFIG%`, `data\db.json` im Arbeitsverzeichnis, `data\db.json` in den Elternordnern der

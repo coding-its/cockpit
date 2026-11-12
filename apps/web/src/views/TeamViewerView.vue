@@ -298,11 +298,25 @@ onMounted(load)
             <tbody>
               <tr v-for="group in groups" :key="group.group_id">
                 <td>
-                  <button class="link-button" @click="toggleSessions(group)">
+                  <button
+                    class="link-button"
+                    :title="
+                      openGroup === group.group_id
+                        ? 'Sitzungen schließen'
+                        : `${group.sessions} Sitzungen anzeigen`
+                    "
+                    @click="toggleSessions(group)"
+                  >
                     {{ group.name }}
+                    <ChevronRight
+                      :size="13"
+                      class="tv-chevron"
+                      :class="{ 'is-open': openGroup === group.group_id }"
+                    />
                   </button>
-                  <small v-if="group.account_code" class="tv-account">
-                    Konto {{ group.account_code }}
+                  <small class="tv-account">
+                    {{ group.sessions }} Sitzungen ansehen
+                    <template v-if="group.account_code"> · Konto {{ group.account_code }}</template>
                   </small>
                 </td>
                 <td>

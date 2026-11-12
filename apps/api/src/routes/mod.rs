@@ -44,6 +44,14 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/v1/teamviewer", get(teamviewer_groups))
         .route("/api/v1/teamviewer/status", get(teamviewer_status))
+        .route(
+            "/api/v1/settings/teamviewer",
+            get(get_teamviewer_settings).put(update_teamviewer_settings),
+        )
+        .route(
+            "/api/v1/settings/teamviewer/test",
+            post(test_teamviewer_settings),
+        )
         .route("/api/v1/teamviewer/sync", post(teamviewer_sync))
         .route("/api/v1/teamviewer/sessions", get(teamviewer_sessions))
         .route(
@@ -1938,6 +1946,134 @@ pub async fn teamviewer_status(
         groups,
         last_sync,
     }))
+}
+
+// ---------------------------------------------------------------------------
+// TeamViewer-Zugang (Einstellungen, nur Administratoren)
+// ---------------------------------------------------------------------------
+
+/// Der Token wird **nie** zurückgegeben – nur, ob einer hinterlegt ist und
+/// woher er kommt. Ein Geheimnis, das man im Browser lesen kann, ist keins.
+pub async fn get_teamviewer_settings(
+    user: CurrentUser,
+) -> ApiResult<Json<serde_json::Value>> {
+    if !user.role.is_admin() {
+        return Err(ApiError::Forbidden(
+            "Nur Administratoren dürfen den TeamViewer-Zugang sehen.".to_string(),
+        ));
+    }
+
+    Ok(Json(serde_json::json!({
+        "configured": crate::teamviewer::configured(),
+        "source": crate::teamviewer::token_source(),
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TeamViewerTokenRequest {
+    /// Leer lassen heißt: hinterlegten Token behalten.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// Token entfernen.
+    #[serde(default)]
+    pub clear: bool,
+    /// Nur prüfen, nicht speichern.
+    #[serde(default)]
+    pub test_only: bool,
+}
+
+pub async fn update_teamviewer_settings(
+    State(state): State<SharedState>,
+    user: CurrentUser,
+    Json(payload): Json<TeamViewerTokenRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    if !user.role.is_admin() {
+        return Err(ApiError::Forbidden(
+            "Nur Administratoren dürfen den TeamViewer-Zugang ändern.".to_string(),
+        ));
+    }
+
+    if payload.clear {
+        crate::teamviewer::clear_token().map_err(ApiError::BadRequest)?;
+
+        audit(
+            &state.pool,
+            user.actor(),
+            "TeamViewer-Zugang entfernt",
+            Some("teamviewer"),
+            None,
+            "",
+        )
+        .await?;
+
+        return Ok(Json(serde_json::json!({ "ok": true, "configured": false })));
+    }
+
+    let Some(token) = payload.token.as_deref().map(str::trim).filter(|text| !text.is_empty())
+    else {
+        if payload.test_only {
+            return Err(ApiError::BadRequest("Bitte einen Token eingeben.".to_string()));
+        }
+        return Ok(Json(serde_json::json!({
+            "ok": true,
+            "configured": crate::teamviewer::configured(),
+            "unchanged": true,
+        })));
+    };
+
+    // Erst prüfen, dann speichern: Ein falscher Token darf den vorhandenen
+    // nicht ersetzen, sonst steht die Funktion plötzlich still.
+    let report = crate::teamviewer::probe(token)
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    if payload.test_only {
+        return Ok(Json(serde_json::json!({ "ok": true, "report": report })));
+    }
+
+    let path = crate::teamviewer::save_token(token).map_err(ApiError::BadRequest)?;
+
+    audit(
+        &state.pool,
+        user.actor(),
+        "TeamViewer-Zugang hinterlegt",
+        Some("teamviewer"),
+        None,
+        &path.display().to_string(),
+    )
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "configured": true,
+        "report": report,
+        "file": path.display().to_string(),
+    })))
+}
+
+/// Nur prüfen, nichts speichern – für den Knopf „Zugang testen".
+pub async fn test_teamviewer_settings(
+    user: CurrentUser,
+    Json(payload): Json<TeamViewerTokenRequest>,
+) -> ApiResult<Json<serde_json::Value>> {
+    if !user.role.is_admin() {
+        return Err(ApiError::Forbidden(
+            "Nur Administratoren dürfen den TeamViewer-Zugang prüfen.".to_string(),
+        ));
+    }
+
+    // Ohne Eingabe: den hinterlegten Token prüfen.
+    let token = match payload.token.as_deref().map(str::trim).filter(|text| !text.is_empty()) {
+        Some(value) => value.to_string(),
+        None => crate::teamviewer::token()
+            .ok_or_else(|| ApiError::BadRequest("Kein Token hinterlegt.".to_string()))?,
+    };
+
+    let report = crate::teamviewer::probe(&token)
+        .await
+        .map_err(ApiError::BadRequest)?;
+
+    Ok(Json(serde_json::json!({ "ok": true, "report": report })))
 }
 
 /// Holt die Verbindungen des Monats (und des Vormonats) von TeamViewer.

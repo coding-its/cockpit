@@ -5262,3 +5262,61 @@ a.demo-card.demo-card--live:hover {
 .tv-table th:nth-child(3) {
   width: 110px;
 }
+
+/* Hinweise und Statuszeilen in den Einstellungen */
+
+.settings-hint {
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 12.4px;
+  line-height: 1.55;
+}
+
+.settings-hint code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f2f4f7;
+  font-size: 11.8px;
+}
+
+.settings-message {
+  margin: 12px 0 0;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 12.8px;
+  line-height: 1.5;
+}
+
+.settings-message--ok {
+  background: #f0fdfa;
+  border: 1px solid #99f6e4;
+  color: #115e59;
+}
+
+.settings-message--error {
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  color: #b42318;
+}
+
+.settings-actions {
+  margin-top: 14px;
+}
+
+/* Ein Feld über die ganze Breite des Formulars */
+.field--wide {
+  display: flex;
+  width: 100%;
+  margin-top: 16px;
+}
+
+/* Aufruf der Sitzungsliste: der Name ist ein Knopf, das soll man sehen. */
+.tv-chevron {
+  margin-left: 3px;
+  vertical-align: -2px;
+  transition: transform 0.15s ease;
+}
+
+.tv-chevron.is-open {
+  transform: rotate(90deg);
+}

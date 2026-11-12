@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.10_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.11_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -513,7 +513,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.10_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.11_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -600,12 +600,29 @@ protokolliert sind – mit Datum, Gerät, Person und Dauer.
 - **Computer & Kontakte** → Einträge anzeigen
 - **Sessionverwaltung** → eigene Sitzungen anzeigen *und* alle Sitzungen anzeigen
 
-Den Token nach `data/teamviewer-token.txt` schreiben (oder nach
-`%APPDATA%\Wartungscockpit\teamviewer-token.txt`) - nur den Token, sonst nichts.
-Die Datei ist von Git ausgenommen und liegt außerhalb des Programms.
+Den Token eintragen unter **Einstellungen → TeamViewer** (nur Administratoren). Er wird
+geprüft, bevor er gespeichert wird, und danach **nie wieder angezeigt**. Mit
+**Zugang testen** lässt sich die Verbindung prüfen, ohne etwas zu ändern – auch ohne
+Eingabe, dann wird der hinterlegte Token getestet.
+
+Gespeichert wird er in `%APPDATA%\Wartungscockpit\teamviewer-token.txt`
+(im Projektordner in `data/teamviewer-token.txt`); die Einstellungen nennen den
+tatsächlichen Pfad. Die Datei ist von Git ausgenommen. Ein Eintrag in der
+Umgebungsvariable `TEAMVIEWER_TOKEN` hat Vorrang – das zeigen die Einstellungen ebenfalls an.
+
+Ein Neustart ist nicht nötig: Der Token wird bei jedem Abgleich neu gelesen.
 
 **Abgleichen:** **Jetzt abgleichen** holt die Verbindungen des gewählten Monats.
 Es wird nichts automatisch übernommen – der Abgleich füllt nur die Liste.
+
+**Einträge ansehen:** Klick auf den Gruppennamen (mit Pfeil) öffnet die Sitzungsliste des
+Monats: Beginn, Gerät, Person, Dauer, TeamViewer-Notiz und Status (offen / übernommen /
+auffällig lang).
+
+**Bearbeiten:** möglich sind derzeit die **Zuordnung** der Gruppe zum Kunden, das
+**Übernehmen** als Zeiteintrag und das **Ausblenden** einer Gruppe. Einzelne Sitzungen lassen
+sich ansehen, aber nicht verändern – eine übernommene Sitzung ändert man über den Zeiteintrag
+(*Zeiten*), eine nicht gewünschte wird vorher nicht übernommen.
 
 **Zuordnen:** TeamViewer führt eigene Kundennamen. Jede Gruppe wird über die Auswahlliste
 einem vorhandenen Kunden (oder Web-Kunden) zugeordnet. Passt ein Name, steht ein **Vorschlag**

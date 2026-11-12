@@ -1428,7 +1428,7 @@ async fn progress(
 
 async fn fetch_client(pool: &PgPool, id: &str) -> ApiResult<WebClient> {
     sqlx::query_as::<_, WebClient>(
-        "SELECT w.*, a.code AS account_code
+        "SELECT w.*, a.code AS account_code, a.name AS account_name
          FROM web_clients w LEFT JOIN accounts a ON a.id = w.account_id
          WHERE w.id = $1",
     )

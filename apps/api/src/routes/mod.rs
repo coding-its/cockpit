@@ -418,7 +418,8 @@ pub async fn get_customer(
 ) -> ApiResult<Json<CustomerDetail>> {
     let customer = sqlx::query_as::<_, Customer>(
         "SELECT c.id, c.name, c.short_code, c.ninja_org_id, c.contact_name, c.contact_email,
-                c.phone, c.notes, c.active, c.focus, c.account_id, a.code AS account_code
+                c.phone, c.notes, c.active, c.focus, c.account_id,
+                a.code AS account_code, a.name AS account_name
          FROM customers c LEFT JOIN accounts a ON a.id = c.account_id
          WHERE c.id = $1",
     )
@@ -1470,7 +1471,8 @@ pub async fn get_run(
 
     let customer = sqlx::query_as::<_, Customer>(
         "SELECT c.id, c.name, c.short_code, c.ninja_org_id, c.contact_name, c.contact_email,
-                c.phone, c.notes, c.active, c.focus, c.account_id, a.code AS account_code
+                c.phone, c.notes, c.active, c.focus, c.account_id,
+                a.code AS account_code, a.name AS account_name
          FROM customers c LEFT JOIN accounts a ON a.id = c.account_id
          WHERE c.id = $1",
     )
@@ -2652,7 +2654,8 @@ pub async fn set_customer_account(
 
     let detail = sqlx::query_as::<_, Customer>(
         "SELECT c.id, c.name, c.short_code, c.ninja_org_id, c.contact_name, c.contact_email,
-                c.phone, c.notes, c.active, c.focus, c.account_id, a.code AS account_code
+                c.phone, c.notes, c.active, c.focus, c.account_id,
+                a.code AS account_code, a.name AS account_name
          FROM customers c LEFT JOIN accounts a ON a.id = c.account_id
          WHERE c.id = $1",
     )

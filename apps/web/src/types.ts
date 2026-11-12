@@ -26,6 +26,7 @@ export interface Customer {
   short_code: string
   account_id: string | null
   account_code: string | null
+  account_name: string | null
   ninja_org_id: number | null
   contact_name: string | null
   contact_email: string | null
@@ -496,6 +497,7 @@ export interface WebClient {
   active: boolean
   account_id: string | null
   account_code: string | null
+  account_name: string | null
 }
 
 export interface WebClientSummary {
@@ -752,6 +754,7 @@ export interface TeamViewerGroup {
   web_client_id: string | null
   assigned_to: string | null
   account_code: string | null
+  account_name: string | null
   sessions: number
   open_sessions: number
   seconds: number

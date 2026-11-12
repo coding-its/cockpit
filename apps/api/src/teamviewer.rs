@@ -413,6 +413,8 @@ pub struct GroupRow {
     /// Zugeordneter Kunde oder Web-Kunde, wie er in der Leiste erscheint.
     pub assigned_to: Option<String>,
     pub account_code: Option<String>,
+    /// Name des Kontos – dafür wird die Rechnung geschrieben.
+    pub account_name: Option<String>,
     pub sessions: i64,
     pub open_sessions: i64,
     pub seconds: i64,
@@ -431,6 +433,7 @@ struct RawGroupRow {
     web_client_id: Option<String>,
     assigned_to: Option<String>,
     account_code: Option<String>,
+    account_name: Option<String>,
     sessions: i64,
     open_sessions: i64,
     seconds: i64,
@@ -486,6 +489,7 @@ pub async fn groups(pool: &PgPool, month: &str) -> Result<Vec<GroupRow>, sqlx::E
             g.web_client_id,
             COALESCE(c.name, w.name) AS assigned_to,
             a.code AS account_code,
+            a.name AS account_name,
             (SELECT COUNT(*) FROM teamviewer_sessions s
               WHERE s.group_id = g.group_id AND substr(s.started_at, 1, 7) = $1)::bigint AS sessions,
             (SELECT COUNT(*) FROM teamviewer_sessions s
@@ -533,6 +537,7 @@ pub async fn groups(pool: &PgPool, month: &str) -> Result<Vec<GroupRow>, sqlx::E
                 web_client_id: row.web_client_id,
                 assigned_to: row.assigned_to,
                 account_code: row.account_code,
+                account_name: row.account_name,
                 sessions: row.sessions,
                 open_sessions: row.open_sessions,
                 seconds: row.seconds,

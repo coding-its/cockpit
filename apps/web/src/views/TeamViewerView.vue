@@ -11,13 +11,7 @@ import {
 } from 'lucide-vue-next'
 import { api, errorMessage } from '../api'
 import Modal from '../components/Modal.vue'
-import type {
-  ActivityKind,
-  CustomerSummary,
-  TeamViewerGroup,
-  TeamViewerSession,
-  WebClientSummary,
-} from '../types'
+import type { ActivityKind, TeamViewerGroup, TeamViewerSession } from '../types'
 import {
   currency,
   currentMonth,
@@ -30,8 +24,6 @@ import {
 const month = ref(currentMonth())
 const groups = ref<TeamViewerGroup[]>([])
 const sessions = ref<TeamViewerSession[]>([])
-const customers = ref<CustomerSummary[]>([])
-const webClients = ref<WebClientSummary[]>([])
 const activities = ref<ActivityKind[]>([])
 const loading = ref(true)
 const syncing = ref(false)
@@ -63,20 +55,6 @@ async function flushPending() {
   if (!pending.size) return
   await Promise.allSettled([...pending])
 }
-
-/** Ziele für die Zuordnung: Kunden und Web-Kunden in einer Liste. */
-const targets = computed(() => [
-  ...customers.value.map((customer) => ({
-    id: customer.id,
-    label: customer.name,
-    kind: 'customer' as const,
-  })),
-  ...webClients.value.map((client) => ({
-    id: client.id,
-    label: `${client.name} (Web)`,
-    kind: 'web' as const,
-  })),
-])
 
 const unassigned = computed(() =>
   groups.value.filter((group) => group.customer_id === null && group.web_client_id === null),
@@ -114,20 +92,15 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [groupList, sessionList, customerList, clientList, status, activityList] =
-      await Promise.all([
-        api.teamviewerGroups(month.value),
-        api.teamviewerSessions(month.value),
-        api.customers(),
-        api.webClients(),
-        api.teamviewerStatus(),
-        api.activities().catch(() => [] as ActivityKind[]),
-      ])
+    const [groupList, sessionList, status, activityList] = await Promise.all([
+      api.teamviewerGroups(month.value),
+      api.teamviewerSessions(month.value),
+      api.teamviewerStatus(),
+      api.activities().catch(() => [] as ActivityKind[]),
+    ])
 
     groups.value = groupList
     sessions.value = sessionList
-    customers.value = customerList
-    webClients.value = clientList
     activities.value = activityList
     configured.value = status.configured
     lastSync.value = status.last_sync
@@ -157,25 +130,6 @@ function changeMonth(delta: number) {
   month.value = shiftMonth(month.value, delta)
 }
 
-/** Zuordnung setzen – der Wert ist `customer:…`, `web:…` oder leer. */
-async function assign(group: TeamViewerGroup, value: string) {
-  busyGroup.value = group.group_id
-  error.value = ''
-  notice.value = ''
-  try {
-    const [kind, id] = value.split(':')
-    await api.teamviewerAssign(group.group_id, {
-      customer_id: kind === 'customer' ? id : null,
-      web_client_id: kind === 'web' ? id : null,
-    })
-    await load()
-  } catch (caught) {
-    error.value = errorMessage(caught)
-  } finally {
-    busyGroup.value = null
-  }
-}
-
 async function hide(group: TeamViewerGroup) {
   busyGroup.value = group.group_id
   try {
@@ -186,12 +140,6 @@ async function hide(group: TeamViewerGroup) {
   } finally {
     busyGroup.value = null
   }
-}
-
-function groupValue(group: TeamViewerGroup): string {
-  if (group.customer_id) return `customer:${group.customer_id}`
-  if (group.web_client_id) return `web:${group.web_client_id}`
-  return ''
 }
 
 /**
@@ -478,8 +426,8 @@ onMounted(load)
           <div>
             <h2>Kundengruppen</h2>
             <p>
-              Klick auf den Namen zeigt die Verbindungen. Zuordnen lässt sich auch gesammelt unter
-              <strong>Einstellungen → Konten</strong>.
+              Klick auf den Namen zeigt die Verbindungen. Die Zuordnung zu einem Kunden wird unter
+              <strong>Einstellungen → Konten</strong> gepflegt.
             </p>
           </div>
           <span class="count-pill">{{ groups.length }}</span>
@@ -499,7 +447,7 @@ onMounted(load)
             <thead>
               <tr>
                 <th>TeamViewer-Gruppe</th>
-                <th>Kunde</th>
+                <th>Abrechnungskonto</th>
                 <th class="num">Verbindungen</th>
                 <th class="num">Zeit</th>
                 <th class="num">Offen</th>
@@ -523,27 +471,16 @@ onMounted(load)
                   </small>
                 </td>
                 <td>
-                  <select
-                    class="tv-select"
-                    :value="groupValue(group)"
-                    :disabled="busyGroup === group.group_id"
-                    @change="assign(group, ($event.target as HTMLSelectElement).value)"
-                  >
-                    <option value="">
-                      {{
-                        group.suggested_name
-                          ? `– Vorschlag: ${group.suggested_name} –`
-                          : '– nicht zugeordnet –'
-                      }}
-                    </option>
-                    <option
-                      v-for="target in targets"
-                      :key="target.id"
-                      :value="`${target.kind}:${target.id}`"
-                    >
-                      {{ target.label }}
-                    </option>
-                  </select>
+                  <span v-if="group.account_name" class="tv-account-name">
+                    {{ group.account_name }}
+                  </span>
+                  <span v-else-if="group.assigned_to" class="tv-account-name">
+                    {{ group.assigned_to }}
+                  </span>
+                  <span v-else class="tv-unassigned">
+                    – nicht zugeordnet –
+                    <small v-if="group.suggested_name">Vorschlag: {{ group.suggested_name }}</small>
+                  </span>
                 </td>
                 <td class="num">{{ group.sessions }}</td>
                 <td class="num nowrap">{{ formatDurationCompact(group.seconds) }}</td>
@@ -645,59 +582,61 @@ onMounted(load)
             </div>
           </header>
 
-          <div class="tv-session-fields">
-            <label class="field tv-duration">
-              <span>Dauer (Minuten)</span>
-              <input
-                type="number"
-                min="0"
-                max="1440"
-                step="1"
-                :value="minutesOf(session)"
+          <div class="tv-session-body">
+            <div class="tv-session-left">
+              <label class="field">
+                <span>Dauer (Minuten)</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="1440"
+                  step="1"
+                  :value="minutesOf(session)"
+                  :disabled="!!session.imported_entry_id || session.ignored"
+                  @change="saveDuration(session, ($event.target as HTMLInputElement).value)"
+                />
+                <small v-if="session.duration_override_seconds !== null" class="field-hint">
+                  Original {{ formatDurationCompact(session.duration_seconds) }}
+                  <button type="button" class="link-inline" @click="resetDuration(session)">
+                    zurücksetzen
+                  </button>
+                </small>
+              </label>
+
+              <label class="field">
+                <span>Leistungsart</span>
+                <select
+                  :value="session.effective_activity"
+                  :disabled="!!session.imported_entry_id || session.ignored"
+                  @change="saveActivity(session, ($event.target as HTMLSelectElement).value)"
+                >
+                  <option v-for="kind in activities" :key="kind.id" :value="kind.name">
+                    {{ kind.name }}
+                  </option>
+                </select>
+              </label>
+            </div>
+
+            <label class="field tv-session-right">
+              <span>Kommentar</span>
+              <textarea
+                rows="4"
+                :value="session.effective_note ?? ''"
+                :placeholder="session.notes ?? 'Kommentar …'"
                 :disabled="!!session.imported_entry_id || session.ignored"
-                @change="saveDuration(session, ($event.target as HTMLInputElement).value)"
+                @blur="saveNote(session, ($event.target as HTMLTextAreaElement).value)"
               />
-              <small v-if="session.duration_override_seconds !== null" class="field-hint">
-                Original {{ formatDurationCompact(session.duration_seconds) }}
-                <button type="button" class="link-inline" @click="resetDuration(session)">
+              <small v-if="session.note_edit !== null" class="field-hint">
+                TeamViewer-Original: {{ session.notes || '–' }}
+                <button type="button" class="link-inline" @click="resetNote(session)">
                   zurücksetzen
                 </button>
               </small>
-            </label>
-
-            <label class="field tv-activity">
-              <span>Leistungsart</span>
-              <select
-                :value="session.effective_activity"
-                :disabled="!!session.imported_entry_id || session.ignored"
-                @change="saveActivity(session, ($event.target as HTMLSelectElement).value)"
-              >
-                <option v-for="kind in activities" :key="kind.id" :value="kind.name">
-                  {{ kind.name }}
-                </option>
-              </select>
+              <small v-else-if="session.notes" class="field-hint">
+                Vorlage aus TeamViewer – überschreiben oder ergänzen
+              </small>
             </label>
           </div>
-
-          <label class="field tv-note">
-            <span>Kommentar</span>
-            <textarea
-              rows="3"
-              :value="session.effective_note ?? ''"
-              :placeholder="session.notes ?? 'Kommentar …'"
-              :disabled="!!session.imported_entry_id || session.ignored"
-              @blur="saveNote(session, ($event.target as HTMLTextAreaElement).value)"
-            />
-            <small v-if="session.note_edit !== null" class="field-hint">
-              TeamViewer-Original: {{ session.notes || '–' }}
-              <button type="button" class="link-inline" @click="resetNote(session)">
-                zurücksetzen
-              </button>
-            </small>
-            <small v-else-if="session.notes" class="field-hint">
-              Vorlage aus TeamViewer – überschreiben oder ergänzen
-            </small>
-          </label>
 
           <p v-if="session.imported_entry_id" class="tv-session-imported">
             Als Zeiteintrag übernommen.

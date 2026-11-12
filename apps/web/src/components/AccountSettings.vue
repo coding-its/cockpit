@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   Building2,
   Check,
+  Globe2,
   MonitorSmartphone,
   Pencil,
   Plus,
@@ -198,22 +199,55 @@ onMounted(load)
         <p>Noch kein Konto angelegt. Solange keins existiert, rechnet jeder Kunde für sich.</p>
       </div>
 
-      <div v-else class="accounts-grid">
-        <article v-for="account in accounts" :key="account.account_id" class="account-row">
-          <div class="account-code">
+      <div v-else class="account-cards">
+        <article v-for="account in accounts" :key="account.account_id" class="account-card">
+          <header class="account-card-head">
             <template v-if="editingId === account.account_id">
-              <input v-model="editDraft.code" class="inline-input" maxlength="12" />
+              <input v-model="editDraft.code" class="inline-input account-code-input" maxlength="12" />
+              <input
+                v-model="editDraft.name"
+                class="inline-input account-name-input"
+                placeholder="Name"
+              />
+              <button
+                class="icon-btn"
+                aria-label="Speichern"
+                :disabled="busyAccount === account.account_id"
+                @click="saveEdit(account.account_id)"
+              >
+                <Check :size="15" />
+              </button>
+              <button class="icon-btn" aria-label="Abbrechen" @click="editingId = null">
+                <X :size="15" />
+              </button>
             </template>
-            <span v-else class="code-badge">{{ account.code }}</span>
-          </div>
-
-          <label class="field">
-            <span>Name</span>
-            <template v-if="editingId === account.account_id">
-              <input v-model="editDraft.name" class="inline-input inline-input--wide" />
+            <template v-else>
+              <span class="code-badge">{{ account.code }}</span>
+              <h3 class="account-card-name">{{ account.name }}</h3>
+              <button
+                class="icon-btn"
+                aria-label="Konto bearbeiten"
+                @click="startEdit(account.account_id, account.code, account.name)"
+              >
+                <Pencil :size="15" />
+              </button>
+              <button
+                class="icon-btn icon-btn--danger"
+                aria-label="Konto löschen"
+                @click="
+                  remove(
+                    account.account_id,
+                    account.code,
+                    (account.customer_id ? 1 : 0) +
+                      (account.web_client_id ? 1 : 0) +
+                      account.teamviewer_groups.length,
+                  )
+                "
+              >
+                <Trash2 :size="15" />
+              </button>
             </template>
-            <strong v-else class="account-name">{{ account.name }}</strong>
-          </label>
+          </header>
 
           <label class="field">
             <span><Server :size="11" /> NinjaOne</span>
@@ -239,7 +273,6 @@ onMounted(load)
             <select
               :value="account.teamviewer_groups[0]?.group_id ?? ''"
               :disabled="busyAccount === account.account_id"
-              title="TeamViewer-Gruppe dieses Kontos"
               @change="
                 setTeamViewerGroup(account.account_id, ($event.target as HTMLSelectElement).value)
               "
@@ -253,78 +286,28 @@ onMounted(load)
                 {{ target.name }}{{ suffix(target.taken_by) }}
               </option>
             </select>
+            <small v-if="account.teamviewer_groups.length > 1" class="field-hint">
+              weitere: {{ account.teamviewer_groups.slice(1).map((g) => g.name).join(', ') }}
+            </small>
           </label>
 
-          <div class="account-row-actions">
-            <template v-if="editingId === account.account_id">
-              <button
-                class="icon-btn"
-                aria-label="Speichern"
-                :disabled="busyAccount === account.account_id"
-                @click="saveEdit(account.account_id)"
-              >
-                <Check :size="15" />
-              </button>
-              <button class="icon-btn" aria-label="Abbrechen" @click="editingId = null">
-                <X :size="15" />
-              </button>
-            </template>
-            <template v-else>
-              <button
-                class="icon-btn"
-                aria-label="Konto bearbeiten"
-                @click="startEdit(account.account_id, account.code, account.name)"
-              >
-                <Pencil :size="15" />
-              </button>
-              <button
-                class="icon-btn icon-btn--danger"
-                aria-label="Konto löschen"
-                @click="
-                  remove(
-                    account.account_id,
-                    account.code,
-                    (account.customer_id ? 1 : 0) +
-                      (account.web_client_id ? 1 : 0) +
-                      account.teamviewer_groups.length,
-                  )
-                "
-              >
-                <Trash2 :size="15" />
-              </button>
-            </template>
-          </div>
-
-          <div class="account-teams">
-            <span v-if="account.web_client_id" class="status-pill status-pill--muted">
-              Web: {{ account.web_client_name }}
-            </span>
-            <span
-              v-for="group in account.teamviewer_groups"
-              :key="group.group_id"
-              class="status-pill status-pill--ok"
+          <label class="field">
+            <span><Globe2 :size="11" /> Web-Kunde</span>
+            <select
+              :value="account.web_client_id ?? ''"
+              :disabled="busyAccount === account.account_id"
+              @change="setWebClient(account.account_id, ($event.target as HTMLSelectElement).value)"
             >
-              TV: {{ group.name }}
-            </span>
-
-            <label v-if="(overview?.web_clients.length ?? 0) > 0" class="account-web">
-              <span>Web-Kunde (optional)</span>
-              <select
-                :value="account.web_client_id ?? ''"
-                :disabled="busyAccount === account.account_id"
-                @change="setWebClient(account.account_id, ($event.target as HTMLSelectElement).value)"
+              <option value="">– keiner –</option>
+              <option
+                v-for="target in overview?.web_clients ?? []"
+                :key="target.id"
+                :value="target.id"
               >
-                <option value="">– keiner –</option>
-                <option
-                  v-for="target in overview?.web_clients ?? []"
-                  :key="target.id"
-                  :value="target.id"
-                >
-                  {{ target.name }}{{ suffix(target.taken_by) }}
-                </option>
-              </select>
-            </label>
-          </div>
+                {{ target.name }}{{ suffix(target.taken_by) }}
+              </option>
+            </select>
+          </label>
         </article>
       </div>
 

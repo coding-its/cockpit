@@ -22,7 +22,7 @@ in der Desktop-App steht dafür ein Knopf bereit.
 
 ### Neuen Arbeitsplatz einrichten
 
-1. `Wartungscockpit_0.1.13_x64_de-DE.msi` installieren.
+1. `Wartungscockpit_0.1.14_x64_de-DE.msi` installieren.
 2. **Starten.** Ohne hinterlegte Verbindung öffnet sich das Fenster **„Datenbank einrichten"**:
    Server, Port, Datenbank, Benutzer und Passwort eintragen, **Verbindung testen**, dann
    **Speichern und starten**. Die Anwendung prüft vor dem Speichern und startet danach neu.
@@ -518,7 +518,7 @@ Webserver.
 - **Datenbank:** PostgreSQL 18 auf einem Rechner im Netz, Datenbank `wartungscockpit`,
   eigenes Konto `cockpit`. Im Moment läuft sie auf diesem Rechner (`127.0.0.1:5432`); für den
   Dauerbetrieb zieht sie auf einen Server um.
-- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.13_x64_de-DE.msi`).
+- **Cockpit:** als Anwendung auf jedem Arbeitsplatz (`Wartungscockpit_0.1.14_x64_de-DE.msi`).
   Nach der Installation `db.json` und `.env` nach `%APPDATA%\Wartungscockpit\` legen.
 - **Umzug der Datenbank:** In der App unter **Einstellungen → Datenbank** die neue Adresse
   eintragen, Verbindung testen, speichern, App neu starten. Kein Neuinstallieren.
@@ -700,16 +700,20 @@ Ein **Abrechnungskonto** fasst solche Datensätze zu **einer** Position zusammen
 **Anlegen:** *Einstellungen → Konten*. Kürzel (z. B. `MWK`) und Name eintragen, **Konto
 anlegen**. Das Kürzel ist eindeutig; „mwk" und „MWK" gelten als dasselbe.
 
-**Zuordnen – gesammelt:** *Einstellungen → Konten*. Je Konto zwei Klapplisten: **NinjaOne** und
-**TeamViewer**. Dort wird eine Firma einmal zusammengeführt, statt bei jedem Kunden einzeln
-anzufangen. Ein zweiter Satz Klapplisten (NinjaOne, TeamViewer) steht direkt in der Kunden- und
-TeamViewer-Ansicht – dieselbe Zuordnung, nur von der anderen Seite bedient.
+**Zuordnen – an einer Stelle:** *Einstellungen → Konten*. Je Konto eine Karte mit drei
+Klapplisten untereinander: **NinjaOne**, **TeamViewer**, **Web-Kunde**. Dort wird eine Firma
+einmal zusammengeführt. In der Kunden- und TeamViewer-Ansicht steht **keine** Auswahl mehr –
+wer dort eine Zuordnung ändern will, geht über die Einstellungen. Das ist Absicht: weniger
+Klickstellen, weniger Fehler.
 
 Hinweis: Ein Konto führt **einen** NinjaOne-Kunden und **eine** TeamViewer-Gruppe. Braucht eine
-Firma mehrere Gerätegruppen, gehören sie in eine gemeinsame TeamViewer-Gruppe.
+Firma mehrere Gerätegruppen, gehören sie in eine gemeinsame TeamViewer-Gruppe; weitere Gruppen
+werden auf der Karte als Hinweis aufgelistet.
 
-**Kontoname gilt überall:** Sobald eine Firma einem Konto zugeordnet ist, erscheint der
-Kontoname statt des abgekürzten Datensatznamens – in Bericht, Aufstellung und Abrechnung.
+**Kontoname gilt überall:** Sobald eine Firma einem Konto zugeordnet ist, steht der Kontoname
+als Überschrift in der Kundenansicht, in der TeamViewer-Liste, im Bericht, in der Aufstellung und
+in der Abrechnung. Der ursprüngliche Datensatzname bleibt darunter als Zeile „Erfasst als …“
+sichtbar – damit nachvollziehbar bleibt, woher der Datensatz kommt.
 
 **Was sich ändert:** Alle Kunden mit demselben Konto erscheinen in Monatsbericht,
 Abrechnungsübersicht und Aufstellung als eine Zeile mit einer Summe. Im Bericht nennt der

@@ -22,6 +22,7 @@ struct BillingRow {
     account_code: Option<String>,
     /// Satz, der für dieses Konto gilt (Vertrag des Kontos, sonst eigener).
     effective_rate: f64,
+    account_name: Option<String>,
 }
 
 /// `default_rate` greift, wo im Vertrag kein Stundensatz gepflegt ist.
@@ -45,7 +46,7 @@ pub async fn summary(
             CAST(COALESCE(ct.included_hours, 0) AS DOUBLE PRECISION) AS included_hours,
             CAST(COALESCE(acct.hourly_rate, ct.hourly_rate, 0) AS DOUBLE PRECISION) AS effective_rate,
             CAST(COALESCE(ct.flat_fee, 0) AS DOUBLE PRECISION) AS flat_fee,
-            c.account_id, ca.code AS account_code,
+            c.account_id, ca.code AS account_code, ca.name AS account_name,
             COALESCE(SUM(CASE WHEN te.billable = true THEN te.duration_seconds ELSE 0 END), 0)::bigint AS billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = false THEN te.duration_seconds ELSE 0 END), 0)::bigint AS non_billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = true THEN
@@ -71,7 +72,7 @@ pub async fn summary(
         WHERE c.active = true
           AND (NOT $2 OR c.focus = true)
         GROUP BY c.id, c.name, c.short_code, ct.included_hours, ct.flat_fee, ct.hourly_rate,
-                 c.account_id, ca.code, acct.hourly_rate
+                 c.account_id, ca.code, ca.name, acct.hourly_rate
 
         UNION ALL
 
@@ -82,7 +83,7 @@ pub async fn summary(
             0.0 AS included_hours,
             CAST(COALESCE(acct.hourly_rate, w.hourly_rate, 0) AS DOUBLE PRECISION) AS effective_rate,
             0.0 AS flat_fee,
-            w.account_id, wa.code AS account_code,
+            w.account_id, wa.code AS account_code, wa.name AS account_name,
             COALESCE(SUM(CASE WHEN te.billable = true THEN te.duration_seconds ELSE 0 END), 0)::bigint AS billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = false THEN te.duration_seconds ELSE 0 END), 0)::bigint AS non_billable_seconds,
             COALESCE(SUM(CASE WHEN te.billable = true THEN
@@ -103,7 +104,7 @@ pub async fn summary(
             ON te.web_client_id = w.id
             AND substr(te.started_at, 1, 7) = $1
         WHERE w.active = true
-        GROUP BY w.id, w.name, w.short_code, w.hourly_rate, w.account_id, wa.code,
+        GROUP BY w.id, w.name, w.short_code, w.hourly_rate, w.account_id, wa.code, wa.name,
                  acct.hourly_rate
         )
         ORDER BY customer_name
@@ -146,7 +147,10 @@ pub async fn summary(
             key,
             BillingCustomer {
                 customer_id: row.customer_id,
-                customer_name: row.customer_name,
+                customer_name: row
+                    .account_name
+                    .clone()
+                    .unwrap_or_else(|| row.customer_name.clone()),
                 short_code,
                 billable_seconds: row.billable_seconds,
                 non_billable_seconds: row.non_billable_seconds,

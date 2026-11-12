@@ -16,6 +16,8 @@ pub struct Customer {
     /// Abrechnungskonto, zu dem dieser Kunde gehört. `None` = eigenständig.
     pub account_id: Option<String>,
     pub account_code: Option<String>,
+    /// Anzeigename des Kontos – gilt überall statt des Datensatznamens.
+    pub account_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -99,6 +101,8 @@ pub struct WebClient {
     /// Abrechnungskonto, zu dem dieser Web-Kunde gehört. `None` = eigenständig.
     pub account_id: Option<String>,
     pub account_code: Option<String>,
+    /// Anzeigename des Kontos – gilt überall statt des Datensatznamens.
+    pub account_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]

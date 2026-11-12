@@ -148,6 +148,7 @@ struct CustomerRow {
     non_billable_seconds: i64,
     account_id: Option<String>,
     account_code: Option<String>,
+    account_name: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -163,6 +164,7 @@ struct WebRow {
     site_count: i64,
     account_id: Option<String>,
     account_code: Option<String>,
+    account_name: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -279,7 +281,7 @@ pub async fn monthly(
             CAST(COALESCE(ct.included_hours, 0) AS DOUBLE PRECISION) AS included_hours,
             CAST(COALESCE(ct.hourly_rate, 0) AS DOUBLE PRECISION) AS hourly_rate,
             CAST(COALESCE(ct.flat_fee, 0) AS DOUBLE PRECISION) AS flat_fee,
-            c.account_id, a.code AS account_code,
+            c.account_id, a.code AS account_code, a.name AS account_name,
             COALESCE((
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.customer_id = c.id AND te.billable = true
@@ -308,7 +310,7 @@ pub async fn monthly(
         SELECT
             w.id, w.name, w.short_code, w.contact_name, w.contact_email,
             CAST(w.hourly_rate AS DOUBLE PRECISION) AS hourly_rate,
-            w.account_id, wa.code AS account_code,
+            w.account_id, wa.code AS account_code, wa.name AS account_name,
             COALESCE((
                 SELECT SUM(te.duration_seconds) FROM time_entries te
                 WHERE te.web_client_id = w.id AND te.billable = true
@@ -374,7 +376,10 @@ pub async fn monthly(
         blocks.push(ReportBlock {
             kind: "ninjaone".to_string(),
             customer_id: customer.id,
-            customer_name: customer.name,
+            customer_name: customer
+                .account_name
+                .clone()
+                .unwrap_or_else(|| customer.name.clone()),
             short_code: customer.short_code,
             contact_name: customer.contact_name,
             contact_email: customer.contact_email,
@@ -438,7 +443,10 @@ pub async fn monthly(
         blocks.push(ReportBlock {
             kind: "web".to_string(),
             customer_id: client.id,
-            customer_name: client.name,
+            customer_name: client
+                .account_name
+                .clone()
+                .unwrap_or_else(|| client.name.clone()),
             short_code: client.short_code,
             contact_name: client.contact_name,
             contact_email: client.contact_email,
@@ -585,8 +593,12 @@ fn merge_accounts(blocks: Vec<ReportBlock>, vat_rate: f64) -> Vec<ReportBlock> {
         let mut sites: Vec<ReportSite> = Vec::new();
 
         for block in &group {
-            if !members.contains(&block.customer_name) {
-                members.push(block.customer_name.clone());
+            // Die Namen der Datensätze, nicht die des Kontos: Bei einem Konto
+            // heißen alle gleich, dann wäre die Herkunft nicht mehr erkennbar.
+            for name in &block.members {
+                if !members.contains(name) {
+                    members.push(name.clone());
+                }
             }
             entries.extend(block.entries.iter().map(|entry| {
                 let amount = if entry.billable {

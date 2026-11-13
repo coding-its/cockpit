@@ -408,6 +408,45 @@ pub async fn update_client(
 // Websites
 // ---------------------------------------------------------------------------
 
+/// Legt eine Website an. Eigene Funktion, damit der Weg testbar ist: Hier sind
+/// schon zwei Wahrheitswerte als `0` statt `false` geschrieben worden – das fiel
+/// erst beim Anlegen im Betrieb auf, weil keine Prüfung diesen Weg berührte.
+async fn insert_site(
+    pool: &PgPool,
+    site_id: &str,
+    web_client_id: &str,
+    url: &str,
+    environment: &str,
+    payload: &CreateWebSiteRequest,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO sites
+         (id, customer_id, web_client_id, url, label, environment, agent_mode,
+          plugin_updates, core_update, status, notes,
+          agent_user, agent_password, agent_secret,
+          login_url, login_user, login_password, login_note, backup_confirmed)
+         VALUES ($1, NULL, $2, $3, $4, $5, 'rest', 0, false, 'unknown', $6,
+                 $7, $8, $9, $10, $11, $12, $13, false)",
+    )
+    .bind(site_id)
+    .bind(web_client_id)
+    .bind(url)
+    .bind(payload.label.as_deref().filter(|value| !value.trim().is_empty()))
+    .bind(environment)
+    .bind(payload.notes.as_deref())
+    .bind(payload.agent_user.as_deref())
+    .bind(payload.agent_password.as_deref())
+    .bind(payload.agent_secret.as_deref())
+    .bind(payload.login_url.as_deref())
+    .bind(payload.login_user.as_deref())
+    .bind(payload.login_password.as_deref())
+    .bind(payload.login_note.as_deref())
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
 pub async fn create_site(
     State(state): State<SharedState>,
     user: CurrentUser,
@@ -444,30 +483,7 @@ pub async fn create_site(
     let site_id = Uuid::new_v4().to_string();
     let now = now_iso();
 
-    sqlx::query(
-        "INSERT INTO sites
-         (id, customer_id, web_client_id, url, label, environment, agent_mode,
-          plugin_updates, core_update, status, notes,
-          agent_user, agent_password, agent_secret,
-          login_url, login_user, login_password, login_note, backup_confirmed)
-         VALUES ($1, NULL, $2, $3, $4, $5, 'rest', 0, 0, 'unknown', $6,
-                 $7, $8, $9, $10, $11, $12, $13, 0)",
-    )
-    .bind(&site_id)
-    .bind(&id)
-    .bind(&url)
-    .bind(payload.label.as_deref().filter(|v| !v.trim().is_empty()))
-    .bind(environment)
-    .bind(payload.notes.as_deref())
-    .bind(payload.agent_user.as_deref())
-    .bind(payload.agent_password.as_deref())
-    .bind(payload.agent_secret.as_deref())
-    .bind(payload.login_url.as_deref())
-    .bind(payload.login_user.as_deref())
-    .bind(payload.login_password.as_deref())
-    .bind(payload.login_note.as_deref())
-    .execute(&state.pool)
-    .await?;
+    insert_site(&state.pool, &site_id, &id, &url, environment, &payload).await?;
 
     audit(
         &state.pool,
@@ -990,7 +1006,7 @@ async fn run_action_background(
                       activity, note, started_at, ended_at, duration_seconds, billable, source, created_at)
                      VALUES ($1, NULL,
                              (SELECT web_client_id FROM sites WHERE id = $2), $2, NULL, NULL, 'System',
-                             $3, $4, $5, $6, $7, 0, 'machine', $6)",
+                             $3, $4, $5, $6, $7, false, 'machine', $6)",
                 )
                 .bind(&entry_id)
                 .bind(&site_id)
@@ -1475,5 +1491,60 @@ fn derive_short_code(name: &str) -> String {
             .to_uppercase()
     } else {
         code
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::insert_site;
+    use crate::models::CreateWebSiteRequest;
+    use crate::testdb;
+
+    /// Der Weg „Website anlegen": Vorher standen hier `0` statt `false` für
+    /// `core_update` und `backup_confirmed`. Das war in SQLite gültig, in
+    /// PostgreSQL nicht – und fiel erst beim Anlegen im Betrieb auf.
+    #[tokio::test]
+    async fn creating_a_site_with_login_data_works() {
+        let (_guard, pool) = testdb::fixture().await;
+
+        sqlx::query(
+            "INSERT INTO web_clients (id, name, short_code, active, created_at)
+             VALUES ('w1', 'Musterwerk Web', 'MWKW', true, '2026-11-01T00:00:00')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let payload = CreateWebSiteRequest {
+            url: "https://beispiel.test/bienenstock".to_string(),
+            label: Some("Bienenstock".to_string()),
+            environment: Some("prod".to_string()),
+            agent_user: Some("maint".to_string()),
+            agent_password: Some("geheim".to_string()),
+            agent_secret: Some("shared-secret".to_string()),
+            login_url: Some("https://beispiel.test/wp-login.php".to_string()),
+            login_user: Some("techniker".to_string()),
+            login_password: Some("auch-geheim".to_string()),
+            login_note: Some("Passwort im Passwortmanager".to_string()),
+            notes: Some("Hosting, Backup-Weg".to_string()),
+        };
+
+        insert_site(&pool, "s1", "w1", "https://beispiel.test/bienenstock", "prod", &payload)
+            .await
+            .expect("Website muss sich anlegen lassen");
+
+        let (core, backup, status, login_user): (bool, bool, String, Option<String>) =
+            sqlx::query_as(
+                "SELECT core_update, backup_confirmed, status, login_user
+                 FROM sites WHERE id = 's1'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+        assert!(!core, "core_update startet auf false");
+        assert!(!backup, "backup_confirmed startet auf false");
+        assert_eq!(status, "unknown");
+        assert_eq!(login_user.as_deref(), Some("techniker"));
     }
 }

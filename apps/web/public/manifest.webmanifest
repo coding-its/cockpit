@@ -9,16 +9,16 @@
   "lang": "de",
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/cockpit-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/itsolutio-wordmark.png",
-      "sizes": "1138x223",
+      "src": "/cockpit-icon-512.png",
+      "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any"
+      "purpose": "any maskable"
     }
   ]
 }
